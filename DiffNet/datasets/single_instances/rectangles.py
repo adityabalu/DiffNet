@@ -3,15 +3,19 @@ import torch
 import numpy as np
 from torch.utils import data
 
-class Dataset(data.Dataset):
+class Rectangle(data.Dataset):
     'PyTorch dataset for sampling coefficients'
     def __init__(self, domain_size=64):
         """
         Initialization
         """
-        self.domain = np.zeros(domain_size,domain_size)
-        rect_params = (10, 10, 50, 30)
-        self.domain[rect_params[0]:rect_params[0]+rect_params[2],rect_params[1]:rect_params[1]+rect_params[3]] = 1.0
+        self.domain = np.ones((domain_size, domain_size))
+        # bc1 will be source, u will be set to 1 at these locations
+        self.bc1 = np.zeros((domain_size, domain_size))
+        self.bc1[0,:] = 1
+        # bc2 will be sink, u will be set to 0 at these locations
+        self.bc2 = np.zeros((domain_size, domain_size))
+        self.bc2[-1,:] = 1
         self.n_samples = 1
         
 
@@ -21,6 +25,6 @@ class Dataset(data.Dataset):
 
     def __getitem__(self, index):
         'Generates one sample of data'
-        coeff = self.coeff
-
-        return coeff
+        inputs = np.array([self.domain, self.bc1, self.bc2])
+        forcing = np.zeros_like(self.domain)
+        return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)

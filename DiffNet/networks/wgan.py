@@ -143,9 +143,9 @@ class GoodDecoder(nn.Module):
         return out
 
     
-class GoodGenerator(nn.Module):
+class GoodNetwork(nn.Module):
     def __init__(self, in_channels=1, out_channels=1, in_dim=64, out_dim=64, lowest_dim=4, filters=16):
-        super(GoodGenerator, self).__init__()
+        super(GoodNetwork, self).__init__()
         assert in_dim > 8
         self.encoder = GoodEncoder(in_channels=in_channels, in_dim=in_dim, lowest_dim=lowest_dim, filters=filters)
         self.decoder = GoodDecoder(out_channels=out_channels, out_dim=out_dim, lowest_dim=lowest_dim, filters=filters)

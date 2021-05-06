@@ -8,9 +8,9 @@ class PDE(LightningModule):
     PDE Base Class
     """
 
-    def __init__(self, dataset, network, **kwargs):
+    def __init__(self, network, dataset, **kwargs):
         super().__init__()
-        self.save_hyperparameters(kwargs)
+        # self.save_hyperparameters(kwargs)
         self.kwargs = kwargs
         self.dataset = dataset
         self.network = network
@@ -18,7 +18,7 @@ class PDE(LightningModule):
         self.domain_size = kwargs.get('domain_size', 64)
         self.batch_size =  kwargs.get('batch_size', 64)
         self.n_workers = kwargs.get('n_workers', 1)
-        self.lr = kwargs.get('learning_rate', 3e-4)
+        self.learning_rate = kwargs.get('learning_rate', 3e-4)
 
     def loss(self, u, inputs_tensor, forcing_tensor):
         raise NotImplementedError
