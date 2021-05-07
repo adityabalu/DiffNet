@@ -7,10 +7,10 @@ def read(file_name):
 
 setup(
     name='DiffNet',
-    description='Compute Hybrid Bounded Distance Fields using GPUs',
+    description='Solve PDEs using traditional Finite Element and Finite Difference based loss functions defined using torch functions',
     long_description=read('README.md'),
     license='MIT',
     author='Biswajit Khara/Aditya Balu',
     author_email='{bkhara,baditya}@iastate.edu',
-    packages=['DiffNet'], 
+    packages=['DiffNet'],
 )
