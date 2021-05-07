@@ -20,7 +20,7 @@ seed_everything(42)
 import DiffNet
 from DiffNet.networks.wgan import GoodNetwork
 from DiffNet.DiffNetFEM import DiffNet2DFEM
-from DiffNet.datasets.single_instances.rectangles import Rectangle
+from DiffNet.datasets.single_instances.rectangles import RectangleIM
 
 
 class Poisson(DiffNet2DFEM):
@@ -40,13 +40,14 @@ class Poisson(DiffNet2DFEM):
         # apply boundary conditions
         u = torch.where(bc1>0.5,1.0+u*0.0,u)
         u = torch.where(bc2>0.5,u*0.0,u)
+        u = nu*u
 
 
-        nu_gp = self.gauss_pt_evaluation(nu)
-        f_gp = self.gauss_pt_evaluation(f)
-        u_gp = self.gauss_pt_evaluation(u)
-        u_x_gp = self.gauss_pt_evaluation_der_x(u)
-        u_y_gp = self.gauss_pt_evaluation_der_y(u)
+        nu_gp = self.gauss_pt_evaluation(nu[nu>0])
+        f_gp = self.gauss_pt_evaluation(f[nu>0])
+        u_gp = self.gauss_pt_evaluation(u[nu>0])
+        u_x_gp = self.gauss_pt_evaluation_der_x(u[nu>0])
+        u_y_gp = self.gauss_pt_evaluation_der_y(u[nu>0])
 
         transformation_jacobian = (0.5 * self.h)**2 * self.gpw.unsqueeze(-1).unsqueeze(-1).unsqueeze(0).type_as(nu_gp)
         res_elmwise = 0.5 * transformation_jacobian * (nu_gp * (u_x_gp**2 + u_y_gp**2) - (u_gp * f_gp))
@@ -68,7 +69,7 @@ class Poisson(DiffNet2DFEM):
         return opts, []
 
     def on_epoch_end(self):
-        fig, axs = plt.subplots(1, 2, figsize=(2*2,1.2),
+        fig, axs = plt.subplots(1, 2, figsize=(2*4,1.2),
                             subplot_kw={'aspect': 'auto'}, sharex=True, sharey=True, squeeze=True)
         for ax in axs:
             ax.set_xticks([])
@@ -88,7 +89,7 @@ class Poisson(DiffNet2DFEM):
         # apply boundary conditions
         u = torch.where(bc1>0.5,1.0+u*0.0,u)
         u = torch.where(bc2>0.5,u*0.0,u)
-
+        u = nu*u
 
 
         k = nu.squeeze().detach().cpu()
@@ -103,26 +104,26 @@ class Poisson(DiffNet2DFEM):
         plt.close('all')
 
 def main():
-    u_tensor = np.ones((1,1,64,64))
+    u_tensor = np.zeros((1,1,64,64))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
-    dataset = Rectangle(domain_size=64)
+    dataset = RectangleIM(domain_size=64)
     basecase = Poisson(network, dataset, batch_size=1)
 
     # ------------------------
     # 1 INIT TRAINER
     # ------------------------
-    logger = pl.loggers.TensorBoardLogger('.', name="optimization")
+    logger = pl.loggers.TensorBoardLogger('.', name="rectangle_immersed")
     csv_logger = pl.loggers.CSVLogger(logger.save_dir, name=logger.name, version=logger.version)
 
     early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss',
-        min_delta=1e-8, patience=10, verbose=False, mode='auto', strict=True)
+        min_delta=1e-8, patience=10, verbose=False, mode='min', strict=True)
     checkpoint = pl.callbacks.model_checkpoint.ModelCheckpoint(monitor='loss',
         dirpath=logger.log_dir, filename='{epoch}-{step}',
         mode='min', save_last=True)
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=1, deterministic=True, profiler=True)
+        max_epochs=500, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training

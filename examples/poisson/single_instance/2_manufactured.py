@@ -115,10 +115,10 @@ class Poisson(DiffNet2DFEM):
         plt.close('all')
 
 def main():
-    u_tensor = np.ones((1,1,1024,1024))
+    u_tensor = np.ones((1,1,64,64))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
-    dataset = RectangleManufactured(domain_size=1024)
-    basecase = Poisson(network, dataset, batch_size=1, domain_size=1024)
+    dataset = RectangleManufactured(domain_size=64)
+    basecase = Poisson(network, dataset, batch_size=1, domain_size=64)
 
     # ------------------------
     # 1 INIT TRAINER
@@ -127,14 +127,14 @@ def main():
     csv_logger = pl.loggers.CSVLogger(logger.save_dir, name=logger.name, version=logger.version)
 
     early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss',
-        min_delta=1e-8, patience=10, verbose=False, mode='auto', strict=True)
+        min_delta=1e-8, patience=10, verbose=False, mode='min', strict=True)
     checkpoint = pl.callbacks.model_checkpoint.ModelCheckpoint(monitor='loss',
         dirpath=logger.log_dir, filename='{epoch}-{step}',
         mode='min', save_last=True)
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=1000, deterministic=True, profiler=True)
+        max_epochs=1000, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training
