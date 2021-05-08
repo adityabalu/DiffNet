@@ -20,7 +20,7 @@ seed_everything(42)
 import DiffNet
 from DiffNet.networks.wgan import GoodNetwork
 from DiffNet.DiffNetFEM import DiffNet2DFEM
-from DiffNet.datasets.single_instances.rectangles import Rectangle
+from DiffNet.datasets.single_instances.rectangles import RectangleIMBack
 
 
 class Poisson(DiffNet2DFEM):
@@ -105,13 +105,13 @@ class Poisson(DiffNet2DFEM):
 def main():
     u_tensor = np.ones((1,1,64,64))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
-    dataset = Rectangle(domain_size=64)
+    dataset = RectangleIMBack(domain_size=64)
     basecase = Poisson(network, dataset, batch_size=1)
 
     # ------------------------
     # 1 INIT TRAINER
     # ------------------------
-    logger = pl.loggers.TensorBoardLogger('.', name="optimization")
+    logger = pl.loggers.TensorBoardLogger('.', name="rectangle_immersed_back")
     csv_logger = pl.loggers.CSVLogger(logger.save_dir, name=logger.name, version=logger.version)
 
     early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss',
@@ -122,7 +122,7 @@ def main():
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=1, deterministic=True, profiler=True)
+        max_epochs=1000, deterministic=True, profiler=True)
 
     # ------------------------
     # 4 Training

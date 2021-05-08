@@ -65,33 +65,6 @@ class RectangleManufactured(data.Dataset):
         return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
 
 
-class Rectangle(data.Dataset):
-    'PyTorch dataset for sampling coefficients'
-    def __init__(self, domain_size=64):
-        """
-        Initialization
-        """
-        self.domain = np.ones((domain_size, domain_size))
-        # bc1 will be source, u will be set to 1 at these locations
-        self.bc1 = np.zeros((domain_size, domain_size))
-        self.bc1[0,:] = 1
-        # bc2 will be sink, u will be set to 0 at these locations
-        self.bc2 = np.zeros((domain_size, domain_size))
-        self.bc2[-1,:] = 1
-        self.n_samples = 6000
-        
-
-    def __len__(self):
-        'Denotes the total number of samples'
-        return self.n_samples
-
-    def __getitem__(self, index):
-        'Generates one sample of data'
-        inputs = np.array([self.domain, self.bc1, self.bc2])
-        forcing = np.zeros_like(self.domain)
-        return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
-
-
 
 
 class RectangleIM(data.Dataset):
@@ -100,19 +73,18 @@ class RectangleIM(data.Dataset):
         """
         Initialization
         """
-        
+
         self.domain = np.zeros((domain_size, domain_size))
-        rect_params = [10,10,30,20] # x, y, w, h
-        self.domain[rect_params[0]:rect_params[0]+rect_params[2],rect_params[1]:rect_params[1]+rect_params[3]] = 1.0
+        rect_params = [10,10,30,50] # x, y, w, h
+        self.domain[rect_params[1]:rect_params[1]+rect_params[3],rect_params[0]:rect_params[0]+rect_params[2]] = 1.0
 
         # bc1 will be source, u will be set to 1 at these locations
         self.bc1 = np.zeros((domain_size, domain_size))
-        self.bc1[rect_params[0],rect_params[1]:rect_params[1]+rect_params[3]] = 1
+        self.bc1[rect_params[1],rect_params[0]:rect_params[0]+rect_params[2]] = 1
         # bc2 will be sink, u will be set to 0 at these locations
         self.bc2 = np.zeros((domain_size, domain_size))
-        self.bc2[rect_params[0]+rect_params[2],rect_params[1]:rect_params[1]+rect_params[3]] = 1
-        self.n_samples = 200
-        
+        self.bc2[rect_params[1]+rect_params[3],rect_params[0]:rect_params[0]+rect_params[2]] = 1
+        self.n_samples = 200        
 
     def __len__(self):
         'Denotes the total number of samples'
@@ -124,3 +96,34 @@ class RectangleIM(data.Dataset):
         forcing = np.zeros_like(self.domain)
         return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
 
+class RectangleIMBack(data.Dataset):
+    'PyTorch dataset for sampling coefficients'
+    def __init__(self, domain_size=64):
+        """
+        Initialization
+        """
+        
+        self.domain = np.ones((domain_size, domain_size))
+        rect_params = [10,10,30,20] # x, y, w, h
+        self.domain[rect_params[1]:rect_params[1]+rect_params[3],rect_params[0]:rect_params[0]+rect_params[2]] = 0.0
+
+        # bc1 will be source, u will be set to 1 at these locations
+        self.bc1 = np.zeros((domain_size, domain_size))
+        self.bc1[rect_params[1]:rect_params[1]+rect_params[3],rect_params[0]:rect_params[0]+rect_params[2]] = 1.0
+        # bc2 will be sink, u will be set to 0 at these locations
+        self.bc2 = np.zeros((domain_size, domain_size))
+        self.bc2[0,:] = 1
+        self.bc2[-1,:] = 1
+        self.bc2[:,0] = 1
+        self.bc2[:,-1] = 1
+        self.n_samples = 200
+
+    def __len__(self):
+        'Denotes the total number of samples'
+        return self.n_samples
+
+    def __getitem__(self, index):
+        'Generates one sample of data'
+        inputs = np.array([self.domain, self.bc1, self.bc2])
+        forcing = np.zeros_like(self.domain)
+        return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)

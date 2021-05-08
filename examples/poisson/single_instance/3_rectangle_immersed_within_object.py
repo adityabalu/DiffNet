@@ -43,17 +43,25 @@ class Poisson(DiffNet2DFEM):
         u = nu*u
 
 
-        nu_gp = self.gauss_pt_evaluation(nu[nu>0])
-        f_gp = self.gauss_pt_evaluation(f[nu>0])
-        u_gp = self.gauss_pt_evaluation(u[nu>0])
-        u_x_gp = self.gauss_pt_evaluation_der_x(u[nu>0])
-        u_y_gp = self.gauss_pt_evaluation_der_y(u[nu>0])
+        nu_gp = self.gauss_pt_evaluation(nu)
+        nu_x_gp = self.gauss_pt_evaluation_der_x(nu)
+        nu_y_gp = self.gauss_pt_evaluation_der_y(nu)
+        f_gp = self.gauss_pt_evaluation(f)
+        u_gp = self.gauss_pt_evaluation(u)
+        bc1_gp = self.gauss_pt_evaluation(bc1)
+        bc2_gp = self.gauss_pt_evaluation(bc2)
+        u_x_gp = self.gauss_pt_evaluation_der_x(u)
+        u_y_gp = self.gauss_pt_evaluation_der_y(u)
 
         transformation_jacobian = (0.5 * self.h)**2 * self.gpw.unsqueeze(-1).unsqueeze(-1).unsqueeze(0).type_as(nu_gp)
         res_elmwise = 0.5 * transformation_jacobian * (nu_gp * (u_x_gp**2 + u_y_gp**2) - (u_gp * f_gp))
-        res_elmwise = torch.sum(res_elmwise, 1) 
+        neumann = 0.5 * transformation_jacobian * (nu_x_gp*u_x_gp + nu_y_gp*u_y_gp) * u_gp
+        neumann = torch.where(bc1_gp>0.1,neumann*0.0,neumann)
+        neumann = torch.where(bc2_gp>0.1,neumann*0.0,neumann)
 
-        loss = torch.mean(res_elmwise)
+        res_elmwise = torch.sum(res_elmwise, 1) -  torch.sum(neumann, 1)
+
+        loss = torch.mean(res_elmwise) 
         return loss
 
     def forward(self, batch):
@@ -69,7 +77,7 @@ class Poisson(DiffNet2DFEM):
         return opts, []
 
     def on_epoch_end(self):
-        fig, axs = plt.subplots(1, 2, figsize=(2*4,1.2),
+        fig, axs = plt.subplots(1, 2, figsize=(2*2,1.2),
                             subplot_kw={'aspect': 'auto'}, sharex=True, sharey=True, squeeze=True)
         for ax in axs:
             ax.set_xticks([])
@@ -91,13 +99,12 @@ class Poisson(DiffNet2DFEM):
         u = torch.where(bc2>0.5,u*0.0,u)
         u = nu*u
 
-
         k = nu.squeeze().detach().cpu()
         u = u.squeeze().detach().cpu()
 
         im0 = axs[0].imshow(k,cmap='jet')
         fig.colorbar(im0, ax=axs[0])
-        im1 = axs[1].imshow(u,cmap='jet')
+        im1 = axs[1].imshow(u,cmap='jet',vmin=0.0, vmax=1.0)
         fig.colorbar(im1, ax=axs[1])  
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
