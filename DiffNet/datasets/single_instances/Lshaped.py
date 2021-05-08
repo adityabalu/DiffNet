@@ -12,7 +12,7 @@ class LShaped(data.Dataset):
         Initialization
         """
         self.domain = np.zeros((domain_size, domain_size))
-        params = [5,5,40,20,30,10]
+        params = [5,5,50,20,50,20]
         self.domain[params[0]:params[0]+params[2],params[1]:params[1]+params[3]] = 1.0
         self.domain[params[0]:params[0]+params[5],params[1]:params[1]+params[4]] = 1.0
         # bc1 will be source, u will be set to 1 at these locations
@@ -25,8 +25,8 @@ class LShaped(data.Dataset):
         self.bc2[params[0]+params[5],params[1]+params[3]:params[1]+params[4]] = 1
         self.bc2[params[0]:params[0]+params[5],params[1]+params[4]] = 1
         self.bc2[params[0],params[1]:params[1]+params[4]] = 1
-        self.n_samples = 1000
-        self.forcing = copy.deepcopy(self.domain)
+        self.n_samples = 200
+        self.forcing = copy.deepcopy(self.domain)*10
         
 
     def __len__(self):

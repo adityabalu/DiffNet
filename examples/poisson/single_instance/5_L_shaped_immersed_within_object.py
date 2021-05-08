@@ -38,9 +38,10 @@ class Poisson(DiffNet2DFEM):
         bc2 = inputs_tensor[:,2:3,:,:]
 
         # apply boundary conditions
-        u = torch.where(bc1>0.5,1.0+u*0.0,u)
-        u = torch.where(bc2>0.5,u*0.0,u)
+        u = torch.where(bc1>0.1,1.0+u*0.0,u)
+        u = torch.where(bc2>0.1,u*0.0,u)
 
+        u = u*nu
 
         nu_gp = self.gauss_pt_evaluation(nu)
         f_gp = self.gauss_pt_evaluation(f)
@@ -86,10 +87,10 @@ class Poisson(DiffNet2DFEM):
         bc2 = inputs_tensor[:,2:3,:,:]
 
         # apply boundary conditions
-        u = torch.where(bc1>0.5,1.0+u*0.0,u)
-        u = torch.where(bc2>0.5,u*0.0,u)
+        u = torch.where(bc1>0.1,1.0+u*0.0,u)
+        u = torch.where(bc2>0.1,u*0.0,u)
 
-
+        u = u*nu
 
         k = nu.squeeze().detach().cpu()
         u = u.squeeze().detach().cpu()
@@ -98,14 +99,14 @@ class Poisson(DiffNet2DFEM):
         f = f.squeeze().detach().cpu()
         im0 = axs[0].imshow(k,cmap='jet')
         fig.colorbar(im0, ax=axs[0])
-        im1 = axs[1].imshow(u,cmap='jet', vmin=0.0, vmax=0.1)
+        im1 = axs[1].imshow(u,cmap='jet')
         fig.colorbar(im1, ax=axs[1])  
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
 
 def main():
-    u_tensor = np.zeros((1,1,64,64))
+    u_tensor = np.ones((1,1,64,64))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
     dataset = LShaped(domain_size=64)
     basecase = Poisson(network, dataset, batch_size=1)
