@@ -20,7 +20,7 @@ seed_everything(42)
 import DiffNet
 from DiffNet.networks.wgan import GoodNetwork
 from DiffNet.DiffNetFEM import DiffNet2DFEM
-from DiffNet.datasets.single_instances.rectangles import Rectangle
+from DiffNet.datasets.single_instances.Lshaped import LShaped
 
 
 class Poisson(DiffNet2DFEM):
@@ -93,25 +93,27 @@ class Poisson(DiffNet2DFEM):
 
         k = nu.squeeze().detach().cpu()
         u = u.squeeze().detach().cpu()
-
+        bc1 = bc1.squeeze().detach().cpu()
+        bc2 = bc2.squeeze().detach().cpu()
+        f = f.squeeze().detach().cpu()
         im0 = axs[0].imshow(k,cmap='jet')
         fig.colorbar(im0, ax=axs[0])
-        im1 = axs[1].imshow(u,cmap='jet')
+        im1 = axs[1].imshow(u,cmap='jet', vmin=0.0, vmax=0.1)
         fig.colorbar(im1, ax=axs[1])  
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
 
 def main():
-    u_tensor = np.ones((1,1,64,64))
+    u_tensor = np.zeros((1,1,64,64))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
-    dataset = Rectangle(domain_size=64)
+    dataset = LShaped(domain_size=64)
     basecase = Poisson(network, dataset, batch_size=1)
 
     # ------------------------
     # 1 INIT TRAINER
     # ------------------------
-    logger = pl.loggers.TensorBoardLogger('.', name="optimization")
+    logger = pl.loggers.TensorBoardLogger('.', name="LShaped")
     csv_logger = pl.loggers.CSVLogger(logger.save_dir, name=logger.name, version=logger.version)
 
     early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss',
@@ -122,7 +124,7 @@ def main():
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=1, deterministic=True, profiler=True)
+        max_epochs=1000, deterministic=True, profiler=True)
 
     # ------------------------
     # 4 Training
