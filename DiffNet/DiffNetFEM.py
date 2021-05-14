@@ -187,7 +187,7 @@ class DiffNet2DFEM(DiffNetFEM):
 class DiffNet3DFEM(DiffNetFEM):
     """docstring for DiffNet2DFEM"""
     def __init__(self, network, dataset, **kwargs):
-        super(DiffNet2DFEM, self).__init__(network, dataset, **kwargs)
+        super(DiffNet3DFEM, self).__init__(network, dataset, **kwargs)
         assert self.nsd==3
         self.gpw = torch.zeros(self.ngp_total)
         self.N_gp = nn.ParameterList() 

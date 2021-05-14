@@ -47,7 +47,7 @@ class RectangleManufactured(data.Dataset):
         self.bc2[0,:] = 1
         self.bc2[:,0] = 1
         self.bc2[:,-1] = 1
-        self.n_samples = 500
+        self.n_samples = 100
         x = np.linspace(0,1,domain_size)
         y = np.linspace(0,1,domain_size)
         xx, yy = np.meshgrid(x,y)
