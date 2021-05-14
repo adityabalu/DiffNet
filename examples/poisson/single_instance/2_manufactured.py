@@ -65,12 +65,28 @@ class Poisson(DiffNet2DFEM):
         inputs_tensor, forcing_tensor = batch
         return self.network[0], inputs_tensor, forcing_tensor
 
+    # def configure_optimizers(self):
+    #     """
+    #     Configure optimizer for network parameters
+    #     """
+    #     lr = self.learning_rate
+    #     opts = [torch.optim.Adam(self.network, lr=lr)]
+    #     return opts, []
+
+    def training_step(self, batch, batch_idx, optimizer_idx):
+        u, inputs_tensor, forcing_tensor = self.forward(batch)
+        loss_val = self.loss(u, inputs_tensor, forcing_tensor).mean()
+        # self.log('PDE_loss', loss_val.item())
+        # self.log('loss', loss_val.item())
+        return {"loss": loss_val}
+
+    def training_step_end(self, training_step_outputs):
+        loss = training_step_outputs["loss"]
+        return training_step_outputs
+
     def configure_optimizers(self):
-        """
-        Configure optimizer for network parameters
-        """
         lr = self.learning_rate
-        opts = [torch.optim.Adam(self.network, lr=lr)]
+        opts = [torch.optim.Adam(self.network, lr=lr), torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
         return opts, []
 
     def on_epoch_end(self):
@@ -115,10 +131,10 @@ class Poisson(DiffNet2DFEM):
         plt.close('all')
 
 def main():
-    u_tensor = np.ones((1,1,64,64))
+    u_tensor = np.ones((1,1,256,256))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
-    dataset = RectangleManufactured(domain_size=64)
-    basecase = Poisson(network, dataset, batch_size=1, domain_size=64)
+    dataset = RectangleManufactured(domain_size=256)
+    basecase = Poisson(network, dataset, batch_size=1, domain_size=256)
 
     # ------------------------
     # 1 INIT TRAINER
@@ -127,14 +143,14 @@ def main():
     csv_logger = pl.loggers.CSVLogger(logger.save_dir, name=logger.name, version=logger.version)
 
     early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss',
-        min_delta=1e-8, patience=10, verbose=False, mode='min', strict=True)
+        min_delta=1e-8, patience=10, verbose=False, mode='max', strict=True)
     checkpoint = pl.callbacks.model_checkpoint.ModelCheckpoint(monitor='loss',
         dirpath=logger.log_dir, filename='{epoch}-{step}',
         mode='min', save_last=True)
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=1000, deterministic=True, profiler="simple")
+        max_epochs=100, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training
