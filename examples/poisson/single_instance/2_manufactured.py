@@ -119,7 +119,7 @@ class Poisson(DiffNet2DFEM):
         np.set_printoptions(precision=3)
         print(np.around(np.linalg.norm(diff.flatten())/self.domain_size, 4))
         im0 = axs[0].imshow(f,cmap='jet')
-        fig.colorbar(im0, ax=axs[0], ticks=[0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0])
+        fig.colorbar(im0, ax=axs[0], ticks=[0.0, 4.0, 8.0, 12.0, 16.0, 20.0])
         im1 = axs[1].imshow(u,cmap='jet', vmin=0.0, vmax=1.0)
         fig.colorbar(im1, ax=axs[1])
         im2 = axs[2].imshow(u_exact,cmap='jet', vmin=0.0, vmax=1.0)
