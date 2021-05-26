@@ -20,28 +20,27 @@ seed_everything(42)
 
 import DiffNet
 from DiffNet.networks.wgan import GoodNetwork
-from DiffNet.DiffNetFEM import DiffNet2DFEM
-from DiffNet.datasets.single_instances.rectangles import RectangleManufactured
+from DiffNet.DiffNetFEM import DiffNet3DFEM
+from DiffNet.datasets.single_instances.voxels import VoxelIMBackRAW
 
 
-class Poisson(DiffNet2DFEM):
+class Poisson(DiffNet3DFEM):
     """docstring for Poisson"""
     def __init__(self, network, dataset, **kwargs):
         super(Poisson, self).__init__(network, dataset, **kwargs)
         x = np.linspace(0,1,self.domain_size)
         y = np.linspace(0,1,self.domain_size)
-        xx, yy = np.meshgrid(x,y)
-        self.u_exact = torch.tensor(np.sin(math.pi*xx)*np.sin(math.pi*yy))
-
+        z = np.linspace(0,1,self.domain_size)
+        xx, yy, zz = np.meshgrid(x,y,z)
 
     def loss(self, u, inputs_tensor, forcing_tensor):
 
         f = forcing_tensor # renaming variable
         
         # extract diffusivity and boundary conditions here
-        nu = inputs_tensor[:,0:1,:,:]
-        bc1 = inputs_tensor[:,1:2,:,:]
-        bc2 = inputs_tensor[:,2:3,:,:]
+        nu = inputs_tensor[:,0:1,:,:,:]
+        bc1 = inputs_tensor[:,1:2,:,:,:]
+        bc2 = inputs_tensor[:,2:3,:,:,:]
 
         # apply boundary conditions
         u = torch.where(bc1>0.5,1.0+u*0.0,u)
@@ -53,9 +52,10 @@ class Poisson(DiffNet2DFEM):
         u_gp = self.gauss_pt_evaluation(u)
         u_x_gp = self.gauss_pt_evaluation_der_x(u)
         u_y_gp = self.gauss_pt_evaluation_der_y(u)
+        u_z_gp = self.gauss_pt_evaluation_der_z(u)
 
-        transformation_jacobian = self.gpw.unsqueeze(-1).unsqueeze(-1).unsqueeze(0).type_as(nu_gp)
-        res_elmwise = transformation_jacobian * ((0.5 * nu_gp * (u_x_gp**2 + u_y_gp**2) - (u_gp * f_gp)))
+        transformation_jacobian = self.gpw.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(0).type_as(nu_gp)
+        res_elmwise = transformation_jacobian * ((0.5 * nu_gp * (u_x_gp**2 + u_y_gp**2  + u_y_gp**2) - (u_gp * f_gp)))
         res_elmwise = torch.sum(res_elmwise, 1) 
 
         loss = torch.mean(res_elmwise)
@@ -102,13 +102,13 @@ class Poisson(DiffNet2DFEM):
 
     def configure_optimizers(self):
         lr = self.learning_rate
-        opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
-        # opts = [torch.optim.Adam(self.network, lr=lr)]
+        # opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
+        opts = [torch.optim.Adam(self.network, lr=lr)]
         # opts = [torch.optim.Adam(self.network, lr=lr), torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
         return opts, []
 
     def on_epoch_end(self):
-        fig, axs = plt.subplots(1, 4, figsize=(2*4,1.2),
+        fig, axs = plt.subplots(1, 2, figsize=(2*2,1.2),
                             subplot_kw={'aspect': 'auto'}, sharex=True, sharey=True, squeeze=True)
         for ax in axs:
             ax.set_xticks([])
@@ -132,32 +132,25 @@ class Poisson(DiffNet2DFEM):
 
         k = nu.squeeze().detach().cpu()
         u = u.squeeze().detach().cpu()
-        u_exact = self.u_exact.squeeze().detach().cpu()
-        diff = u - u_exact
-        print(np.linalg.norm(diff.flatten())/self.domain_size)
-        im0 = axs[0].imshow(f,cmap='jet')
-        fig.colorbar(im0, ax=axs[0], ticks=[0.0, 4.0, 8.0, 12.0, 16.0, 20.0])
-        im1 = axs[1].imshow(u,cmap='jet', vmin=0.0, vmax=1.0)
+        im0 = axs[0].imshow(k[:,:,48],cmap='jet')
+        fig.colorbar(im0, ax=axs[0])
+        im1 = axs[1].imshow(u[:,:,48],cmap='jet', vmin=0.0, vmax=1.0)
         fig.colorbar(im1, ax=axs[1])
-        im2 = axs[2].imshow(u_exact,cmap='jet', vmin=0.0, vmax=1.0)
-        fig.colorbar(im2, ax=axs[2])
-        im3 = axs[3].imshow(diff,cmap='jet')
-        fig.colorbar(im3, ax=axs[3])
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
 
 def main():
-    # u_tensor = np.random.randn(1,1,256,256)
-    u_tensor = np.ones((1,1,1024,1024))
+    filename = 'humvee'
+    dataset = VoxelIMBackRAW(filename, domain_size=64)
+    u_tensor = np.ones_like(dataset.domain)
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
-    dataset = RectangleManufactured(domain_size=1024)
-    basecase = Poisson(network, dataset, batch_size=1, domain_size=1024, learning_rate=0.01)
+    basecase = Poisson(network, dataset, batch_size=1, domain_size=64, learning_rate=0.01, nsd=3)
 
     # ------------------------
     # 1 INIT TRAINER
     # ------------------------
-    logger = pl.loggers.TensorBoardLogger('.', name="manufactured")
+    logger = pl.loggers.TensorBoardLogger('.', name="voxel-humvee")
     csv_logger = pl.loggers.CSVLogger(logger.save_dir, name=logger.name, version=logger.version)
 
     early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss',
@@ -168,7 +161,7 @@ def main():
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=5, deterministic=True, profiler="simple")
+        max_epochs=30, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training
