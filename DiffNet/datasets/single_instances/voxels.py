@@ -24,7 +24,7 @@ def load_raw(fileName, **kwargs):
     inOutName = fileName + 'inouts.raw'
     configName = fileName + 'VoxelConfig.txt'
     inOut = np.fromfile(inOutName, dtype=np.dtype('uint8'))
-    inOut = (inOut / 254.0 > 0.5).astype(float)
+    inOut = (inOut / 254.0 > 0.25).astype(float)
     bBoxMax, bBoxMin, numDiv, gridSize = _configParser(configName)
     inOut = np.reshape(inOut, numDiv, order='F')
     return inOut, numDiv, gridSize, bBoxMin
@@ -37,7 +37,9 @@ class VoxelIMBackRAW(data.Dataset):
         """
 
         vox, _, _ , _  = load_raw(filename)
-        self.domain = 1-vox
+        domain = np.ones((domain_size, domain_size, domain_size))
+        domain[32:32+vox.shape[0],32:32+vox.shape[1],32:32+vox.shape[2]] = 1 - vox
+        self.domain = domain
 
         # bc1 will be source, u will be set to 1 at these locations
         self.bc1 = np.zeros_like(self.domain)

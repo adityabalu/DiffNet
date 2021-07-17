@@ -130,8 +130,8 @@ class Poisson(DiffNet3DFEM):
         u = torch.where(bc2>0.5,u*0.0,u)
 
 
-        k = nu.squeeze().detach().cpu()
-        u = u.squeeze().detach().cpu()
+        k = nu.squeeze().detach().cpu().numpy()
+        u = u.squeeze().detach().cpu().numpy()
         im0 = axs[0].imshow(k[:,:,48],cmap='jet')
         fig.colorbar(im0, ax=axs[0])
         im1 = axs[1].imshow(u[:,:,48],cmap='jet', vmin=0.0, vmax=1.0)
@@ -139,13 +139,19 @@ class Poisson(DiffNet3DFEM):
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
+        os.makedirs(os.path.join(self.logger[0].log_dir, 'viz_%s'%self.current_epoch))
+        knorm = k/k.max()
+        (((knorm*255.0).astype('uint8')).flatten(order='F')).tofile(os.path.join(self.logger[0].log_dir,'viz_%s'%self.current_epoch,'diffusivity.raw'))
+        unorm = np.clip(u,0.0,1.0)
+        (((unorm*255.0).astype('uint8')).flatten(order='F')).tofile(os.path.join(self.logger[0].log_dir,'viz_%s'%self.current_epoch,'u.raw'))
+
 
 def main():
-    filename = 'humvee'
-    dataset = VoxelIMBackRAW(filename, domain_size=64)
+    filename = 'Engine'
+    dataset = VoxelIMBackRAW(filename, domain_size=196)
     u_tensor = np.ones_like(dataset.domain)
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
-    basecase = Poisson(network, dataset, batch_size=1, domain_size=64, learning_rate=0.01, nsd=3)
+    basecase = Poisson(network, dataset, batch_size=1, domain_size=196, learning_rate=0.01, nsd=3)
 
     # ------------------------
     # 1 INIT TRAINER

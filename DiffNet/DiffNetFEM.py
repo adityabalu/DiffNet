@@ -58,17 +58,17 @@ class DiffNetFEM(PDE):
                                         0.5 * x * (x-1.),
                                         (1. - x**2),
                                         0.5 * x * (x+1.)
-                                        ], dtype=np.float32)
+                                        ], dtype=np.float)
             self.bf_1d_der = lambda x: np.array([
                                         0.5 * (2.*x-1.),
                                         (- 2.*x),
                                         0.5 * (2.*x+1.)
-                                        ], dtype=np.float32)
+                                        ], dtype=np.float)
             self.bf_1d_der2 = lambda x: np.array([
                                         0.5 * (2.),
                                         (- 2.),
                                         0.5 * (2.)
-                                        ], dtype=np.float32)
+                                        ], dtype=np.float)
         
         elif self.fem_basis_deg == 3:
             assert (self.domain_size- 1)%3 == 0
@@ -82,20 +82,20 @@ class DiffNetFEM(PDE):
                                         (27. / 16.) * (x**3 - (1. / 3.) * x**2 - x + (1. / 3.)),
                                         (-27. / 16.) * (x**3 + (1. / 3.) * x**2 - x - (1. / 3.)),
                                         (9. / 16.) * (x**3 + x**2 - (1. / 9.) * x - (1. / 9.))
-                                        ], dtype=np.float32)
+                                        ], dtype=np.float)
             self.bf_1d_der = lambda x: np.array([
                                         (-9. / 16.) * (3 * x**2 - 2 * x - (1. / 9.)),
                                         (27. / 16.) * (3 * x**2 - (2. / 3.) * x - 1),
                                         (-27. / 16.) * (3 * x**2 + (2. / 3.) * x - 1),
                                         (9. / 16.) * (3 * x**2 + 2 * x - (1. / 9.))
-                                        ], dtype=np.float32)
+                                        ], dtype=np.float)
 
             self.bf_1d_der2 = lambda x: np.array([
                                         (-9. / 16.) * (6. * x - 2.),
                                         (27. / 16.) * (6. * x - (2. / 3.)),
                                         (-27. / 16.) * (6. * x + (2. / 3.)),
                                         (9. / 16.) * (6. * x + 2.)
-                                        ], dtype=np.float32)
+                                        ], dtype=np.float)
 
     def gauss_guadrature_scheme(self, ngp_1d):
         if ngp_1d == 1:

@@ -150,10 +150,10 @@ class Poisson(DiffNet3DFEM):
         plt.close('all')
 
 def main():
-    u_tensor = np.ones((1,1,128,128,128))
+    u_tensor = np.ones((1,1,130,130,130))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
-    dataset = CuboidManufactured(domain_size=128)
-    basecase = Poisson(network, dataset, batch_size=1, domain_size=128, learning_rate=0.01, nsd=3)
+    dataset = CuboidManufactured(domain_size=130)
+    basecase = Poisson(network, dataset, batch_size=1, domain_size=130, learning_rate=0.01, nsd=3, fem_basis_deg=3)
 
     # ------------------------
     # 1 INIT TRAINER
