@@ -129,7 +129,7 @@ def grid3D(nx, ny, nz):
 
     return xv, yv, zv
 
-def generate_diffusivity_tensor(coeff, output_size=64, nsd=2, n_sum_nu=4):
+def generate_diffusivity_tensor(coeff, output_size=64, nsd=2, n_sum_nu=6):
     pi = np.pi
     sin = np.sin
     cos = np.cos
@@ -159,7 +159,7 @@ def generate_diffusivity_tensor(coeff, output_size=64, nsd=2, n_sum_nu=4):
     a5 = np.zeros(shape, dtype=np.float32)
     a6 = np.zeros(shape, dtype=np.float32)
 
-    list_of_coeff_tensors_nu = coeff.to_list()
+    list_of_coeff_tensors_nu = coeff.tolist()
 
     a1 = list_of_coeff_tensors_nu[0]
     if (n_sum_nu > 1):
