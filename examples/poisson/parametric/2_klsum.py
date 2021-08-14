@@ -86,55 +86,65 @@ class Poisson(DiffNet2DFEM):
         return opts, schd
 
     def on_epoch_end(self):
-        fig, axs = plt.subplots(1, 2, figsize=(2*2,1.2),
+        num_query = 6
+        plt_num_row = num_query
+        plt_num_col = 2
+        fig, axs = plt.subplots(plt_num_row, plt_num_col, figsize=(2*plt_num_col,1.2*plt_num_row),
                             subplot_kw={'aspect': 'auto'}, sharex=True, sharey=True, squeeze=True)
-        for ax in axs:
-            ax.set_xticks([])
-            ax.set_yticks([])
+        for ax_row in axs:
+            for ax in ax_row:
+                ax.set_xticks([])
+                ax.set_yticks([])
+        
         self.network.eval()
-        inputs, forcing = self.dataset[0]
-        print("\ninference for: ", self.dataset.coeffs[0])
+        inputs, forcing = self.dataset[0:num_query]
+        forcing = forcing.repeat(num_query,1,1,1)
+        print("\ninference for: ", self.dataset.coeffs[0:num_query])
 
-        u, inputs_tensor, forcing_tensor = self.forward((inputs.unsqueeze(0).type_as(next(self.network.parameters())), forcing.unsqueeze(0).type_as(next(self.network.parameters()))))
-
-        loss = self.loss(u, inputs_tensor, forcing_tensor)
+        ub, inputs_tensor, forcing_tensor = self.forward((inputs.type_as(next(self.network.parameters())), forcing.type_as(next(self.network.parameters()))))
+        
+        loss = self.loss(ub, inputs_tensor, forcing_tensor[:,0:1,:,:])
         print("loss incurred for this coeff:", loss)        
 
-        f = forcing_tensor # renaming variable
-        
-        # extract diffusivity and boundary conditions here
-        nu = inputs_tensor[:,0:1,:,:]
-        bc1 = inputs_tensor[:,1:2,:,:]
-        bc2 = inputs_tensor[:,2:3,:,:]
+        for idx in range(num_query):
+            f = forcing_tensor # renaming variable
+            
+            # extract diffusivity and boundary conditions here
+            nu = inputs_tensor[idx,0:1,:,:]
+            u = ub[idx,0:1,:,:]
+            bc1 = inputs_tensor[idx,1:2,:,:]
+            bc2 = inputs_tensor[idx,2:3,:,:]
 
-        # apply boundary conditions
-        u = torch.where(bc1>0.5,1.0+u*0.0,u)
-        u = torch.where(bc2>0.5,u*0.0,u)
+            # apply boundary conditions
+            u = torch.where(bc1>0.5,1.0+u*0.0,u)
+            u = torch.where(bc2>0.5,u*0.0,u)
 
+            k = nu.squeeze().detach().cpu()
+            u = u.squeeze().detach().cpu()
 
-
-        k = nu.squeeze().detach().cpu()
-        u = u.squeeze().detach().cpu()
-
-        im0 = axs[0].imshow(k,cmap='jet')
-        fig.colorbar(im0, ax=axs[0])
-        im1 = axs[1].imshow(u,cmap='jet')
-        fig.colorbar(im1, ax=axs[1])  
+            im0 = axs[idx][0].imshow(k,cmap='jet')
+            fig.colorbar(im0, ax=axs[idx,0])
+            im1 = axs[idx][1].imshow(u,cmap='jet')
+            fig.colorbar(im1, ax=axs[idx,1])  
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
 
 def main():
-    dirname = '../klsum'
-    dataset = KLSumStochastic('sobol_6d.npy', domain_size=64, kl_terms=4)
+    kl_terms = 4
+    domain_size = 32
+    LR = 1e-3
+    batch_size = 16
+
+    dataset = KLSumStochastic('sobol_6d.npy', domain_size=domain_size, kl_terms=kl_terms)
     # dataset = Dataset('../single_instance/example-coefficients.txt', domain_size=64)
     network = AE(in_channels=1, out_channels=1, dims=64, n_downsample=3)
-    basecase = Poisson(network, dataset, batch_size=16, domain_size=64, learning_rate=0.001)
+    basecase = Poisson(network, dataset, batch_size=batch_size, domain_size=domain_size, learning_rate=LR)
 
     # ------------------------
     # 1 INIT TRAINER
     # ------------------------
-    logger = pl.loggers.TensorBoardLogger('.', name="klsum")
+    logger = pl.loggers.TensorBoardLogger('.', name="klsum_"+str(domain_size))
     csv_logger = pl.loggers.CSVLogger(logger.save_dir, name=logger.name, version=logger.version)
 
     early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss',
