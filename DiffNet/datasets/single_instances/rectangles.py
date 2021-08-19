@@ -64,7 +64,7 @@ class RectangleManufactured(data.Dataset):
         forcing = self.forcing
         return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
 
-class RectangleManufacturedHelmholtz(data.Dataset):
+class RectangleHelmholtzManufactured(data.Dataset):
     'PyTorch dataset for sampling coefficients'
     def __init__(self, domain_size=64):
         """

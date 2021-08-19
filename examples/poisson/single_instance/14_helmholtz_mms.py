@@ -21,7 +21,7 @@ seed_everything(42)
 import DiffNet
 from DiffNet.networks.wgan import GoodNetwork
 from DiffNet.DiffNetFEM import DiffNet2DFEM
-from DiffNet.datasets.single_instances.rectangles import RectangleManufacturedHelmholtz
+from DiffNet.datasets.single_instances.rectangles import RectangleHelmholtzManufactured
 
 
 class Poisson(DiffNet2DFEM):
@@ -155,7 +155,7 @@ def main():
     # u_tensor = np.random.randn(1,1,256,256)
     u_tensor = np.ones((1,1,domain_size,domain_size))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
-    dataset = RectangleManufacturedHelmholtz(domain_size=domain_size)
+    dataset = RectangleHelmholtzManufactured(domain_size=domain_size)
     basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=LR)
 
     # ------------------------
