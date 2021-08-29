@@ -31,8 +31,10 @@ class Poisson(DiffNet2DFEM):
         x = np.linspace(0,1,self.domain_size)
         y = np.linspace(0,1,self.domain_size)
         xx, yy = np.meshgrid(x,y)
-        self.u_exact = torch.tensor(np.sin(math.pi*xx)*np.sin(math.pi*yy))
+        self.u_exact = torch.tensor(self.exact_solution(xx,yy))
 
+    def exact_solution(self, x,y):
+        return np.sin(math.pi*x)*np.sin(math.pi*y)
 
     def loss(self, u, inputs_tensor, forcing_tensor):
 
@@ -132,6 +134,8 @@ class Poisson(DiffNet2DFEM):
 
         k = nu.squeeze().detach().cpu()
         u = u.squeeze().detach().cpu()
+        self.u_curr = u
+
         u_exact = self.u_exact.squeeze().detach().cpu()
         diff = u - u_exact
         print(np.linalg.norm(diff.flatten())/self.domain_size)
@@ -147,12 +151,78 @@ class Poisson(DiffNet2DFEM):
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
 
+    def calc_l2_err(self):
+        cn = lambda j,n: [j,j+1,j+n,(j+1)+n]
+        N = lambda x,y: (1./4.)*np.array([(1-x)*(1-y), (1+x)*(1-y), (1-x)*(1+y), (1+x)*(1+y)])
+        transform = lambda a,b,x: ((a+b)/2. + (b-a)/2.*x)
+
+        ngp = 4
+        gpx = np.array([-0.577350269189626, 0.577350269189626, -0.577350269189626, 0.577350269189626])
+        gpy = np.array([-0.577350269189626, -0.577350269189626, 0.577350269189626, 0.577350269189626])
+        gpw = np.ones(4)
+
+        nnodex = self.domain_size
+        nnodey = self.domain_size
+        nelmx = self.domain_size - 1
+        nelmy = self.domain_size - 1
+        hx = (1. / nelmx)
+        hy = (1. / nelmy)
+        J = (hx/2.)*(hy/2.)
+        print("J = ", J)
+
+        x = np.linspace(0,1,self.domain_size)
+        y = np.linspace(0,1,self.domain_size)
+        u_sol = self.u_curr.numpy()
+
+        usolnorm = 0.
+        uexnorm = 0.
+        l2_err = 0.
+        for j in range(nelmy):
+            for i in range(nelmx):
+                local_u = (u_sol[j:j+2,i:i+2].reshape(4,1)).squeeze()
+                # print("local_u = ", local_u)
+                for igp in range(ngp):
+                    basis = N(gpx[igp], gpy[igp])
+                    # print("basis = ", basis)
+                    xp = transform(x[i],x[i+1],gpx[igp])
+                    yp = transform(y[j],y[j+1],gpy[igp])
+
+                    u1 = np.dot(local_u, basis)
+                    u2 = self.exact_solution(xp,yp)
+
+                    # print("(xp,yp,uex,usol) = ", xp,yp,u2,u1)
+                    # print("u1 = ", u1)
+                    # print("u2 = ", u2)
+                    # print("gpw(igp) = ", gpw[igp])
+                    # print("J = ", J)
+                    l2_err += (u1 - u2)**2 * J
+                    usolnorm += u1**2*J
+                    uexnorm += u2**2*J
+
+        l2_err = np.sqrt(l2_err)
+        usolnorm = np.sqrt(usolnorm)
+        uexnorm = np.sqrt(uexnorm)
+
+        u_ex = self.u_exact.squeeze().detach().cpu().numpy()
+
+
+        print("usol.shape =", u_sol.shape)
+        print("uex.shape =", u_ex.shape)
+        print("||u_sol||, ||uex|| = ", usolnorm, uexnorm)
+        print("||e||_{{L2}} = ", l2_err)
+        # by taking vector norm
+        print("||e|| (vector-norm) = ", np.linalg.norm(u_ex - u_sol, 'fro')/nnodex)
+
+
 def main():
     # u_tensor = np.random.randn(1,1,256,256)
-    u_tensor = np.ones((1,1,1024,1024))
+
+    domain_size = 32
+
+    u_tensor = np.ones((1,1,domain_size,domain_size))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
-    dataset = RectangleManufactured(domain_size=1024)
-    basecase = Poisson(network, dataset, batch_size=1, domain_size=1024, learning_rate=0.01)
+    dataset = RectangleManufactured(domain_size=domain_size)
+    basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=0.01)
 
     # ------------------------
     # 1 INIT TRAINER
@@ -180,6 +250,8 @@ def main():
     # 5 SAVE NETWORK
     # ------------------------
     torch.save(basecase.network, os.path.join(logger.log_dir, 'network.pt'))
+
+    basecase.calc_l2_err()
 
 
 if __name__ == '__main__':
