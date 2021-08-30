@@ -149,10 +149,10 @@ class Poisson(DiffNet2DFEM):
 
 def main():
     # u_tensor = np.random.randn(1,1,256,256)
-    u_tensor = np.ones((1,1,1024,1024))
+    u_tensor = np.ones((1,1,256,256))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
-    dataset = RectangleManufactured(domain_size=1024)
-    basecase = Poisson(network, dataset, batch_size=1, domain_size=1024, learning_rate=0.01)
+    dataset = RectangleManufactured(domain_size=256)
+    basecase = Poisson(network, dataset, batch_size=1, domain_size=256, learning_rate=0.01)
 
     # ------------------------
     # 1 INIT TRAINER
@@ -168,7 +168,7 @@ def main():
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=5, deterministic=True, profiler="simple")
+        max_epochs=2, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training

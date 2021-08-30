@@ -101,14 +101,14 @@ class Poisson(DiffNetFDM):
         res = gradU_DOT_gradNU + torch.mul(nu[:,:,1:-1,1:-1], u_laplacian)
         # print("res size = ", (res.view(u.shape[0], -1)).shape)
 
-        loss1 = torch.norm(res.view(u.shape[0], -1), p=1, dim=1)
-        loss2 = torch.norm(res.view(u.shape[0], -1), p=2, dim=1)
+        # loss1 = torch.norm(res.view(u.shape[0], -1), p=1, dim=1)
+        # loss2 = torch.norm(res.view(u.shape[0], -1), p=2, dim=1)
 
         # print("loss1 = ", loss1, ", size = ", loss1.shape)
         # print("loss2 = ", loss2, ", size = ", loss2.shape)
         # exit()
         # return (0.1*loss1 + 0.9*loss2)
-        return loss1
+        return torch.sum(res, 1)**2
 
         # nu_gp = self.gauss_pt_evaluation(nu)
         # f_gp = self.gauss_pt_evaluation(f)
@@ -132,12 +132,20 @@ class Poisson(DiffNetFDM):
         Configure optimizer for network parameters
         """
         # lr = self.learning_rate
-        # opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
+        # opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=10)]
         # return opts, []
-        opts = [torch.optim.Adam(self.network.parameters(), lr=1e-4)]
+        opts = [torch.optim.Adam(self.network.parameters(), lr=1e-1), torch.optim.LBFGS(self.network, lr=1.0, max_iter=10)]
         schd = []
-        # schd = [torch.optim.lr_scheduler.MultiStepLR(opts[0], milestones=[10,15,30], gamma=0.1)]
+        # schd = [torch.optim.lr_scheduler.MultiStepLR(opts[0], milestones=[2, 5, 8, 12, 16, 20], gamma=0.1)]
+        schd = [torch.optim.lr_scheduler.ExponentialLR(opts[0], gamma=0.5)]
         return opts, schd
+
+    def training_step(self, batch, batch_idx, optimizer_idx):
+        u, inputs_tensor, forcing_tensor = self.forward(batch)
+        loss_val = self.loss(u, inputs_tensor, forcing_tensor).mean()
+        self.log('PDE_loss', loss_val.item())
+        self.log('loss', loss_val.item())
+        return loss_val
 
     def on_epoch_end(self):
         fig, axs = plt.subplots(1, 2, figsize=(2*2,1.2),
@@ -192,7 +200,7 @@ def main():
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=2000, deterministic=True, profiler="simple")
+        max_epochs=100, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training
