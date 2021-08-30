@@ -20,6 +20,7 @@ seed_everything(42)
 
 import DiffNet
 from DiffNet.networks.wgan import GoodNetwork
+from DiffNet.networks.autoencoders import AE
 from DiffNet.DiffNetFEM import DiffNet2DFEM
 from DiffNet.datasets.single_instances.rectangles import RectangleManufactured
 
@@ -65,7 +66,10 @@ class Poisson(DiffNet2DFEM):
 
     def forward(self, batch):
         inputs_tensor, forcing_tensor = batch
-        return self.network[0], inputs_tensor, forcing_tensor
+        # print("size of inputs_tensor = ", inputs_tensor.shape)
+        # print("size of forcing_tensor = ", forcing_tensor.shape)
+        # exit()
+        return self.network(inputs_tensor), inputs_tensor, forcing_tensor
 
     # def configure_optimizers(self):
     #     """
@@ -104,8 +108,8 @@ class Poisson(DiffNet2DFEM):
 
     def configure_optimizers(self):
         lr = self.learning_rate
-        opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
-        # opts = [torch.optim.Adam(self.network, lr=lr)]
+        # opts = [torch.optim.LBFGS(self.network.parameters(), lr=1.0, max_iter=5)]
+        opts = [torch.optim.Adam(self.network.parameters(), lr=lr)]
         # opts = [torch.optim.Adam(self.network, lr=lr), torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
         return opts, []
 
@@ -217,17 +221,17 @@ class Poisson(DiffNet2DFEM):
 def main():
     # u_tensor = np.random.randn(1,1,256,256)
 
-    domain_size = 32
+    domain_size = 128
 
     u_tensor = np.ones((1,1,domain_size,domain_size))
-    network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
+    network = AE(in_channels=3, out_channels=1, dims=64, n_downsample=3)
     dataset = RectangleManufactured(domain_size=domain_size)
-    basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=0.01)
+    basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=0.001)
 
     # ------------------------
     # 1 INIT TRAINER
     # ------------------------
-    logger = pl.loggers.TensorBoardLogger('.', name="manufactured")
+    logger = pl.loggers.TensorBoardLogger('.', name="mms-network")
     csv_logger = pl.loggers.CSVLogger(logger.save_dir, name=logger.name, version=logger.version)
 
     early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss',
@@ -238,7 +242,7 @@ def main():
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=2, deterministic=True, profiler="simple")
+        max_epochs=20, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training

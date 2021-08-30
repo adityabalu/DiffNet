@@ -134,8 +134,8 @@ class Poisson(DiffNetFDM):
         u_x = nn.functional.conv2d(u, self.sobelx)
         u_y = nn.functional.conv2d(u, self.sobely)
 
-        nbc_down = u_x[:,:,0,:]-u_x[:,:,1,:]
-        nbc_up = u_x[:,:,-1,:]-u_x[:,:,-2,:]
+        nbc_down = u[:,:,0,:]-u[:,:,1,:]
+        nbc_up = u[:,:,-1,:]-u[:,:,-2,:]
         
         # print("size of nu_x = ", nu_x.shape)
         # print("size of nu[:,:,1:-1,1:-1] = ", nu[:,:,1:-1,1:-1].shape)
@@ -145,7 +145,8 @@ class Poisson(DiffNetFDM):
 
         res = nbc_down**2 + nbc_up**2
         loss = res.sum(axis=-1)
-        # print("res size = ", (res.view(u.shape[0], -1)).shape)
+        # print("size(res) = ", (res.view(u.shape[0], -1)).shape)
+        # print("size(loss) = ", (loss.shape))
 
         # loss1 = torch.norm(res.view(u.shape[0], -1), p=1, dim=1)
         # loss2 = torch.norm(res.view(u.shape[0], -1), p=2, dim=1)
@@ -176,16 +177,16 @@ class Poisson(DiffNetFDM):
         Configure optimizer for network parameters
         """
         # lr = self.learning_rate
-        opts = [torch.optim.LBFGS(self.network, lr=1e-1, max_iter=3), torch.optim.LBFGS(self.network, lr=1e-1, max_iter=3)]
+        # opts = [torch.optim.LBFGS(self.network, lr=1e-1, max_iter=3), torch.optim.LBFGS(self.network, lr=1e-1, max_iter=3)]
         # return opts, []
-        # opts = [torch.optim.Adam(self.network.parameters(), lr=1e-4), torch.optim.Adam(self.network.parameters(), lr=1e-4)]
+        opts = [torch.optim.Adam(self.network.parameters(), lr=1e-2), torch.optim.Adam(self.network.parameters(), lr=1e-2)]
         schd = []
         # schd = [torch.optim.lr_scheduler.MultiStepLR(opts[0], milestones=[10,15,30], gamma=0.1)]
         return opts, schd
 
     def on_epoch_end(self):
-        fig, axs = plt.subplots(1, 2, figsize=(2*2,1.2),
-                            subplot_kw={'aspect': 'auto'}, sharex=True, sharey=True, squeeze=True)
+        fig, axs = plt.subplots(1, 4, figsize=(2*4,1.2),
+                            subplot_kw={'aspect': 'auto'}, squeeze=True)
         for ax in axs:
             ax.set_xticks([])
             ax.set_yticks([])
@@ -212,6 +213,8 @@ class Poisson(DiffNetFDM):
         fig.colorbar(im0, ax=axs[0])
         im1 = axs[1].imshow(u,cmap='jet')
         fig.colorbar(im1, ax=axs[1])  
+        axs[2].plot(u[:,31], label='xind-31'); axs[2].set_ylim([0.,2.]); axs[2].legend()
+        axs[3].plot(u[31,:], label='yind-31'); axs[3].set_ylim([0.,2.]); axs[3].legend()
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
@@ -225,7 +228,7 @@ def main():
     # ------------------------
     # 1 INIT TRAINER
     # ------------------------
-    logger = pl.loggers.TensorBoardLogger('.', name="klsum-fdm")
+    logger = pl.loggers.TensorBoardLogger('.', name="klsum-fdm-nbc")
     csv_logger = pl.loggers.CSVLogger(logger.save_dir, name=logger.name, version=logger.version)
 
     early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss',
@@ -236,7 +239,7 @@ def main():
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=2000, deterministic=True, profiler="simple")
+        max_epochs=5000, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training

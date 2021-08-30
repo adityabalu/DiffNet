@@ -21,7 +21,7 @@ seed_everything(42)
 import DiffNet
 from DiffNet.networks.wgan import GoodNetwork
 from DiffNet.DiffNetFEM import DiffNet2DFEM
-from DiffNet.datasets.single_instances.rectangles import RectangleManufactured
+from DiffNet.datasets.single_instances.rectangles import RectangleHelmholtzDeltaForce
 
 
 class Poisson(DiffNet2DFEM):
@@ -31,10 +31,8 @@ class Poisson(DiffNet2DFEM):
         x = np.linspace(0,1,self.domain_size)
         y = np.linspace(0,1,self.domain_size)
         xx, yy = np.meshgrid(x,y)
-        self.u_exact = torch.tensor(self.exact_solution(xx,yy))
-
-    def exact_solution(self, x,y):
-        return np.sin(math.pi*x)*np.sin(math.pi*y)
+        self.u_exact = torch.tensor(np.sin(math.pi*xx)*np.sin(math.pi*yy))   
+        self.khh = dataset.khh     
 
     def loss(self, u, inputs_tensor, forcing_tensor):
 
@@ -57,7 +55,8 @@ class Poisson(DiffNet2DFEM):
         u_y_gp = self.gauss_pt_evaluation_der_y(u)
 
         transformation_jacobian = self.gpw.unsqueeze(-1).unsqueeze(-1).unsqueeze(0).type_as(nu_gp)
-        res_elmwise = transformation_jacobian * ((0.5 * nu_gp * (u_x_gp**2 + u_y_gp**2) - (u_gp * f_gp)))
+        # - 0.5 * self.khh**2 *(u_gp**2)
+        res_elmwise = transformation_jacobian * (0.5 * (nu_gp*(u_x_gp**2 + u_y_gp**2) - self.khh**2 * u_gp**2) - (u_gp * f_gp))
         res_elmwise = torch.sum(res_elmwise, 1) 
 
         loss = torch.mean(res_elmwise)
@@ -104,7 +103,7 @@ class Poisson(DiffNet2DFEM):
 
     def configure_optimizers(self):
         lr = self.learning_rate
-        opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
+        opts = [torch.optim.LBFGS(self.network, lr=0.1, max_iter=5)]
         # opts = [torch.optim.Adam(self.network, lr=lr)]
         # opts = [torch.optim.Adam(self.network, lr=lr), torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
         return opts, []
@@ -134,100 +133,35 @@ class Poisson(DiffNet2DFEM):
 
         k = nu.squeeze().detach().cpu()
         u = u.squeeze().detach().cpu()
-        self.u_curr = u
-
         u_exact = self.u_exact.squeeze().detach().cpu()
         diff = u - u_exact
         print(np.linalg.norm(diff.flatten())/self.domain_size)
         im0 = axs[0].imshow(f,cmap='jet')
-        fig.colorbar(im0, ax=axs[0], ticks=[0.0, 4.0, 8.0, 12.0, 16.0, 20.0])
+        fig.colorbar(im0, ax=axs[0])
         im1 = axs[1].imshow(u,cmap='jet', vmin=0.0, vmax=1.0)
         fig.colorbar(im1, ax=axs[1])
-        im2 = axs[2].imshow(u_exact,cmap='jet', vmin=0.0, vmax=1.0)
-        fig.colorbar(im2, ax=axs[2])
-        im3 = axs[3].imshow(diff,cmap='jet')
-        fig.colorbar(im3, ax=axs[3])
+        # im2 = axs[2].imshow(u_exact,cmap='jet', vmin=0.0, vmax=1.0)
+        # fig.colorbar(im2, ax=axs[2])
+        # im3 = axs[3].imshow(diff,cmap='jet')
+        # fig.colorbar(im3, ax=axs[3])
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
 
-    def calc_l2_err(self):
-        cn = lambda j,n: [j,j+1,j+n,(j+1)+n]
-        N = lambda x,y: (1./4.)*np.array([(1-x)*(1-y), (1+x)*(1-y), (1-x)*(1+y), (1+x)*(1+y)])
-        transform = lambda a,b,x: ((a+b)/2. + (b-a)/2.*x)
-
-        ngp = 4
-        gpx = np.array([-0.577350269189626, 0.577350269189626, -0.577350269189626, 0.577350269189626])
-        gpy = np.array([-0.577350269189626, -0.577350269189626, 0.577350269189626, 0.577350269189626])
-        gpw = np.ones(4)
-
-        nnodex = self.domain_size
-        nnodey = self.domain_size
-        nelmx = self.domain_size - 1
-        nelmy = self.domain_size - 1
-        hx = (1. / nelmx)
-        hy = (1. / nelmy)
-        J = (hx/2.)*(hy/2.)
-        print("J = ", J)
-
-        x = np.linspace(0,1,self.domain_size)
-        y = np.linspace(0,1,self.domain_size)
-        u_sol = self.u_curr.numpy()
-
-        usolnorm = 0.
-        uexnorm = 0.
-        l2_err = 0.
-        for j in range(nelmy):
-            for i in range(nelmx):
-                local_u = (u_sol[j:j+2,i:i+2].reshape(4,1)).squeeze()
-                # print("local_u = ", local_u)
-                for igp in range(ngp):
-                    basis = N(gpx[igp], gpy[igp])
-                    # print("basis = ", basis)
-                    xp = transform(x[i],x[i+1],gpx[igp])
-                    yp = transform(y[j],y[j+1],gpy[igp])
-
-                    u1 = np.dot(local_u, basis)
-                    u2 = self.exact_solution(xp,yp)
-
-                    # print("(xp,yp,uex,usol) = ", xp,yp,u2,u1)
-                    # print("u1 = ", u1)
-                    # print("u2 = ", u2)
-                    # print("gpw(igp) = ", gpw[igp])
-                    # print("J = ", J)
-                    l2_err += (u1 - u2)**2 * J
-                    usolnorm += u1**2*J
-                    uexnorm += u2**2*J
-
-        l2_err = np.sqrt(l2_err)
-        usolnorm = np.sqrt(usolnorm)
-        uexnorm = np.sqrt(uexnorm)
-
-        u_ex = self.u_exact.squeeze().detach().cpu().numpy()
-
-
-        print("usol.shape =", u_sol.shape)
-        print("uex.shape =", u_ex.shape)
-        print("||u_sol||, ||uex|| = ", usolnorm, uexnorm)
-        print("||e||_{{L2}} = ", l2_err)
-        # by taking vector norm
-        print("||e|| (vector-norm) = ", np.linalg.norm(u_ex - u_sol, 'fro')/nnodex)
-
-
 def main():
+    domain_size = 256
+    LR = 1e-3
+    
     # u_tensor = np.random.randn(1,1,256,256)
-
-    domain_size = 32
-
     u_tensor = np.ones((1,1,domain_size,domain_size))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
-    dataset = RectangleManufactured(domain_size=domain_size)
-    basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=0.01)
+    dataset = RectangleHelmholtzDeltaForce(domain_size=domain_size)
+    basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=LR)
 
     # ------------------------
     # 1 INIT TRAINER
     # ------------------------
-    logger = pl.loggers.TensorBoardLogger('.', name="manufactured")
+    logger = pl.loggers.TensorBoardLogger('.', name="hh-mms")
     csv_logger = pl.loggers.CSVLogger(logger.save_dir, name=logger.name, version=logger.version)
 
     early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss',
@@ -238,7 +172,7 @@ def main():
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=2, deterministic=True, profiler="simple")
+        max_epochs=5, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training
@@ -250,8 +184,6 @@ def main():
     # 5 SAVE NETWORK
     # ------------------------
     torch.save(basecase.network, os.path.join(logger.log_dir, 'network.pt'))
-
-    basecase.calc_l2_err()
 
 
 if __name__ == '__main__':
