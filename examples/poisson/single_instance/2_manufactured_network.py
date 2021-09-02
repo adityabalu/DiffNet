@@ -225,6 +225,7 @@ def main():
 
     u_tensor = np.ones((1,1,domain_size,domain_size))
     network = AE(in_channels=3, out_channels=1, dims=64, n_downsample=3)
+    # network = GoodNetwork(in_channels=3, out_channels=1, in_dim=64, out_dim=64)
     dataset = RectangleManufactured(domain_size=domain_size)
     basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=0.001)
 

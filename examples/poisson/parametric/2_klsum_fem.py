@@ -135,9 +135,9 @@ def main():
     domain_size = 32
     LR = 1e-3
     batch_size = 16
-    sample_size = 16384
+    sample_size = 65536
     sobol_file = 'sobol_d'+str(kl_terms)+'_N'+str(sample_size)+'.npy'
-    max_epochs = 100000 #int(np.ceil(200000 / (sample_size/batch_size)))
+    max_epochs = int(np.ceil(200000 / (sample_size/batch_size)))
     print("Max_epochs = ", max_epochs)
 
     dataset = KLSumStochastic(sobol_file, domain_size=domain_size, kl_terms=kl_terms)
