@@ -238,7 +238,7 @@ def main():
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=5, deterministic=True, profiler="simple")
+        max_epochs=2, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training

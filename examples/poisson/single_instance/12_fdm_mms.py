@@ -139,11 +139,11 @@ class Poisson(DiffNetFDM):
         Configure optimizer for network parameters
         """
         # lr = self.learning_rate
-        # opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
+        opts = [torch.optim.LBFGS(self.network, lr=0.1, max_iter=4)]
         # return opts, []
-        opts = [torch.optim.Adam(self.network.parameters(), lr=1e-3)]
+        # opts = [torch.optim.Adam(self.network.parameters(), lr=1e-3)]
         schd = []
-        # schd = [torch.optim.lr_scheduler.MultiStepLR(opts[0], milestones=[10,15,30], gamma=0.1)]
+        schd = [torch.optim.lr_scheduler.MultiStepLR(opts[0], milestones=[2,5,10], gamma=0.1)]
         return opts, schd
 
     def on_epoch_end(self):
@@ -205,7 +205,7 @@ def main():
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=1000, deterministic=True, profiler="simple")
+        max_epochs=25, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training

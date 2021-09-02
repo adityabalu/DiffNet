@@ -98,41 +98,41 @@ class Poisson(DiffNetFDM):
         # print("size of u_laplacian = ", u_laplacian.shape)
         # exit()
 
-        res = gradU_DOT_gradNU + torch.mul(nu[:,:,1:-1,1:-1], u_laplacian)
+        res = ((gradU_DOT_gradNU + torch.mul(nu[:,:,1:-1,1:-1], u_laplacian))**2).sum(axis=1)
         # print("res size = ", (res.view(u.shape[0], -1)).shape)
 
-        loss1 = torch.norm(res.view(u.shape[0], -1), p=1, dim=1)
-        loss2 = torch.norm(res.view(u.shape[0], -1), p=2, dim=1)
+        # loss1 = torch.norm(res.view(u.shape[0], -1), p=1, dim=1)
+        # loss2 = torch.norm(res.view(u.shape[0], -1), p=2, dim=1)
 
         # print("loss1 = ", loss1, ", size = ", loss1.shape)
         # print("loss2 = ", loss2, ", size = ", loss2.shape)
         # exit()
         # return (0.1*loss1 + 0.9*loss2)
-        return loss1
+    #     return torch.sum(res, 1)**2
 
-        # nu_gp = self.gauss_pt_evaluation(nu)
-        # f_gp = self.gauss_pt_evaluation(f)
-        # u_gp = self.gauss_pt_evaluation(u)
-        # u_x_gp = self.gauss_pt_evaluation_der_x(u)
-        # u_y_gp = self.gauss_pt_evaluation_der_y(u)
+    #     # nu_gp = self.gauss_pt_evaluation(nu)
+    #     # f_gp = self.gauss_pt_evaluation(f)
+    #     # u_gp = self.gauss_pt_evaluation(u)
+    #     # u_x_gp = self.gauss_pt_evaluation_der_x(u)
+    #     # u_y_gp = self.gauss_pt_evaluation_der_y(u)
 
-        # transformation_jacobian = self.gpw.unsqueeze(-1).unsqueeze(-1).unsqueeze(0).type_as(nu_gp)
-        # res_elmwise = transformation_jacobian * (nu_gp * (u_x_gp**2 + u_y_gp**2) - (u_gp * f_gp))
-        # res_elmwise = torch.sum(res_elmwise, 1) 
+    #     # transformation_jacobian = self.gpw.unsqueeze(-1).unsqueeze(-1).unsqueeze(0).type_as(nu_gp)
+    #     # res_elmwise = transformation_jacobian * (nu_gp * (u_x_gp**2 + u_y_gp**2) - (u_gp * f_gp))
+    #     # res_elmwise = torch.sum(res_elmwise, 1) 
 
-        # loss = torch.mean(res_elmwise)
-        # return loss
-    def loss_nbc(self, u, inputs_tensor, forcing_tensor):
-        # extract diffusivity and boundary conditions here
-        bc1 = inputs_tensor[:,1:2,:,:]
-        bc2 = inputs_tensor[:,2:3,:,:]
+    #     # loss = torch.mean(res_elmwise)
+    #     # return loss
+    # def loss_nbc(self, u, inputs_tensor, forcing_tensor):
+    #     # extract diffusivity and boundary conditions here
+    #     bc1 = inputs_tensor[:,1:2,:,:]
+    #     bc2 = inputs_tensor[:,2:3,:,:]
 
-        # apply boundary conditions
-        u = torch.where(bc1>0.5,1.0+u*0.0,u)
-        u = torch.where(bc2>0.5,u*0.0,u)
+    #     # apply boundary conditions
+    #     u = torch.where(bc1>0.5,1.0+u*0.0,u)
+    #     u = torch.where(bc2>0.5,u*0.0,u)
 
-        u_x = nn.functional.conv2d(u, self.sobelx)
-        u_y = nn.functional.conv2d(u, self.sobely)
+    #     u_x = nn.functional.conv2d(u, self.sobelx)
+    #     u_y = nn.functional.conv2d(u, self.sobely)
 
         nbc_down = u[:,:,0,:]-u[:,:,1,:]
         nbc_up = u[:,:,-1,:]-u[:,:,-2,:]
@@ -143,8 +143,8 @@ class Poisson(DiffNetFDM):
         # print("size of u_laplacian = ", u_laplacian.shape)
         # exit()
 
-        res = nbc_down**2 + nbc_up**2
-        loss = res.sum(axis=-1)
+        neumann = nbc_down**2 + nbc_up**2
+        neumann = neumann.mean(axis=-1)
         # print("size(res) = ", (res.view(u.shape[0], -1)).shape)
         # print("size(loss) = ", (loss.shape))
 
@@ -155,31 +155,31 @@ class Poisson(DiffNetFDM):
         # print("loss2 = ", loss2, ", size = ", loss2.shape)
         # exit()
         # return (0.1*loss1 + 0.9*loss2)
-        return loss
+        return res + 0.1*neumann
 
     def forward(self, batch):
         inputs_tensor, forcing_tensor = batch
         return self.network[0], inputs_tensor, forcing_tensor
 
-    def training_step(self, batch, batch_idx, optimizer_idx):
-        u, inputs_tensor, forcing_tensor = self.forward(batch)
-        if optimizer_idx == 0:
-            loss_val = self.loss(u, inputs_tensor, forcing_tensor).mean()
-            self.log('PDE_loss', loss_val.item())
-        else:
-            loss_val = self.loss_nbc(u, inputs_tensor, forcing_tensor).mean()
-            self.log('NBC_loss', loss_val.item())
-        self.log('loss', loss_val.item())
-        return loss_val
+    # def training_step(self, batch, batch_idx, optimizer_idx):
+    #     u, inputs_tensor, forcing_tensor = self.forward(batch)
+    #     if optimizer_idx == 0:
+    #         loss_val = self.loss(u, inputs_tensor, forcing_tensor).mean()
+    #         self.log('PDE_loss', loss_val.item())
+    #     else:
+    #         loss_val = self.loss_nbc(u, inputs_tensor, forcing_tensor).mean()
+    #         self.log('NBC_loss', loss_val.item())
+    #     self.log('loss', loss_val.item())
+    #     return loss_val
 
     def configure_optimizers(self):
         """
         Configure optimizer for network parameters
         """
         # lr = self.learning_rate
-        # opts = [torch.optim.LBFGS(self.network, lr=1e-1, max_iter=3), torch.optim.LBFGS(self.network, lr=1e-1, max_iter=3)]
+        opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
         # return opts, []
-        opts = [torch.optim.Adam(self.network.parameters(), lr=1e-2), torch.optim.Adam(self.network.parameters(), lr=1e-2)]
+        # opts = [torch.optim.Adam(self.network.parameters(), lr=3e-4), torch.optim.Adam(self.network.parameters(), lr=3e-4)]
         schd = []
         # schd = [torch.optim.lr_scheduler.MultiStepLR(opts[0], milestones=[10,15,30], gamma=0.1)]
         return opts, schd
@@ -239,7 +239,7 @@ def main():
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=5000, deterministic=True, profiler="simple")
+        max_epochs=50, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training
