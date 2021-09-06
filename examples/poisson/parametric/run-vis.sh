@@ -13,5 +13,7 @@ echo "Working directory = ${CASE_DIR}"
 #######################################################################
 for i in 15 16 17 18 19
 do
-	cd /work/baskarg/bkhara/diffnet/examples/poisson/parametric/klsum_32/version_${i}; python3 ../../calc_mean_sdev.py
+	cd /work/baskarg/bkhara/diffnet/examples/poisson/parametric/klsum_32/version_${i};
+	python3 ../../visualize.py -ip q_mean.npy
+	python3 ../../visualize.py -ip q_sdev.npy
 done

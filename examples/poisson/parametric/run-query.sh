@@ -14,4 +14,7 @@ echo "Working directory = ${CASE_DIR}"
 QUERY_SCRIPT="query.py"
 
 # example
-time $(python ${QUERY_SCRIPT} >out_query.txt 2>&1 -m /work/baskarg/bkhara/diffnet/examples/poisson/parametric/klsum_32/version_15)
+for i in 15 16 17 18 19
+do
+	time $(python ${QUERY_SCRIPT} >out_query.txt 2>&1 -m /work/baskarg/bkhara/diffnet/examples/poisson/parametric/klsum_32/version_${i})
+done
