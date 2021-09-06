@@ -13,8 +13,5 @@ echo "Working directory = ${CASE_DIR}"
 #######################################################################
 QUERY_SCRIPT="query.py"
 
-time python ${QUERY_SCRIPT} >out_query.txt 2>&1 -m /work/baskarg/bkhara/diffnet/examples/poisson/parametric/klsum_32/version_15
-time python ${QUERY_SCRIPT} >out_query.txt 2>&1 -m /work/baskarg/bkhara/diffnet/examples/poisson/parametric/klsum_32/version_16
-time python ${QUERY_SCRIPT} >out_query.txt 2>&1 -m /work/baskarg/bkhara/diffnet/examples/poisson/parametric/klsum_32/version_17
-time python ${QUERY_SCRIPT} >out_query.txt 2>&1 -m /work/baskarg/bkhara/diffnet/examples/poisson/parametric/klsum_32/version_18
-time python ${QUERY_SCRIPT} >out_query.txt 2>&1 -m /work/baskarg/bkhara/diffnet/examples/poisson/parametric/klsum_32/version_19
+# example
+time $(python ${QUERY_SCRIPT} >out_query.txt 2>&1 -m /work/baskarg/bkhara/diffnet/examples/poisson/parametric/klsum_32/version_15)

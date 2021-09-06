@@ -154,11 +154,26 @@ class Poisson(DiffNet2DFEM):
                     I = j * npoint_1d + i
                     point_values[idx_0:idx_1, I] =  u[:,point_idx[j], point_idx[i]]
 
-        mean_value = mean_value / num_query_sample
-
         np.save(os.path.join(output_path,'q_all.npy'), all_inf)
-        np.save(os.path.join(output_path,'q_mean_value.npy'), mean_value)
         np.save(os.path.join(output_path,'q_point_values.npy'), point_values)
+
+        q_mean, q_sdev = self.calc_mean_stddev(all_inf)
+        np.save(os.path.join(output_path, 'q_mean.npy'), q_mean)
+        np.save(os.path.join(output_path, 'q_sdev.npy'), q_sdev)
+
+    def calc_mean_stddev(self, X):
+        mean = np.mean(X, axis=0)
+        var = (X-mean)**2
+        var = np.mean(var, axis=0)
+        std = np.sqrt(var)
+        return mean, std
+
+    def calc_mean_stddev_from_file(self, args):
+        q_all = np.load('./q_all.npy')
+        q_mean, q_sdev = self.calc_mean_stddev(q_all)
+        np.save(os.path.join(output_path, 'q_mean.npy'), q_mean)
+        np.save(os.path.join(output_path, 'q_sdev.npy'), q_sdev)
+        
 
 def build_parser():
     parser = argparse.ArgumentParser()
