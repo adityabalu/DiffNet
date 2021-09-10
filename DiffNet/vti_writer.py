@@ -79,7 +79,7 @@ class vtiWriter:
 
         vti_file_object.close()
 
-    def vti_from_multiple_vector(self, vti_file, data_list, scalar_name_list, as_celldata_list):
+    def vti_from_multiple_vector(self, vti_file, data_list, as_celldata_list, scalar_name_list):
         assert len(data_list) == len(scalar_name_list)
         assert len(data_list) == len(as_celldata_list)
 

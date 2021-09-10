@@ -131,12 +131,16 @@ class Poisson(DiffNet2DFEM):
         plt.close('all')
 
 def main():
-    kl_terms = 4
+    kl_terms = 6
     domain_size = 32
     LR = 1e-3
     batch_size = 16
+    sample_size = 65536
+    sobol_file = 'sobol_d'+str(kl_terms)+'_N'+str(sample_size)+'.npy'
+    max_epochs = int(np.ceil(200000 / (sample_size/batch_size)))
+    print("Max_epochs = ", max_epochs)
 
-    dataset = KLSumStochastic('sobol_6d.npy', domain_size=domain_size, kl_terms=kl_terms)
+    dataset = KLSumStochastic(sobol_file, domain_size=domain_size, kl_terms=kl_terms)
     # dataset = Dataset('../single_instance/example-coefficients.txt', domain_size=64)
     network = AE(in_channels=1, out_channels=1, dims=64, n_downsample=3)
     basecase = Poisson(network, dataset, batch_size=batch_size, domain_size=domain_size, learning_rate=LR)
@@ -153,9 +157,9 @@ def main():
         dirpath=logger.log_dir, filename='{epoch}-{step}',
         mode='min', save_last=True)
 
-    trainer = Trainer(gpus=[0],callbacks=[early_stopping],
-        checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=10000, deterministic=True, profiler='simple', auto_lr_find=True)
+    trainer = Trainer(gpus=[0],callbacks=[early_stopping,checkpoint],
+        checkpoint_callback=True, logger=[logger,csv_logger],
+        max_epochs=max_epochs, deterministic=True, profiler='simple', auto_lr_find=True)
 
     # ------------------------
     # 4 Training
