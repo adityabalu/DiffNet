@@ -20,9 +20,21 @@ seed_everything(42)
 
 import DiffNet
 from DiffNet.networks.wgan import GoodNetwork
+from DiffNet.networks.wgan_old import GoodGenerator
 from DiffNet.networks.autoencoders import AE
 from DiffNet.DiffNetFEM import DiffNet2DFEM
 from DiffNet.datasets.single_instances.rectangles import RectangleManufactured
+
+from pytorch_lightning.callbacks.base import Callback
+
+class OptimSwitchLBFGS(Callback):
+    def __init__(self, epochs=10):
+        self.switch_epoch = epochs
+
+    def on_epoch_start(self, trainer, pl_module):
+        if trainer.current_epoch == self.switch_epoch:
+            opts = [torch.optim.LBFGS(pl_module.network.parameters(), lr=1.0, max_iter=1)]
+            trainer.optimizers = opts
 
 
 class Poisson(DiffNet2DFEM):
@@ -109,19 +121,11 @@ class Poisson(DiffNet2DFEM):
     def configure_optimizers(self):
         lr = self.learning_rate
 
-        if self.current_epoch < 10:
-            opts = [torch.optim.Adam(self.network.parameters(), lr=lr)]
-        else:
-            opts = [torch.optim.LBFGS(self.network.parameters(), lr=1.0, max_iter=5)]
+        opts = [torch.optim.Adam(self.network.parameters(), lr=lr)]
 
         # opts = [torch.optim.Adam(self.network, lr=lr), torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
         schd = [torch.optim.lr_scheduler.ExponentialLR(opts[0], gamma=0.95)]
         return opts, schd
-
-    def on_epoch_start(self):
-        if self.current_epoch < 10:
-            self.trainer.accelerator_backend.setup_optimizers(self)
-
 
     def on_epoch_end(self):
         fig, axs = plt.subplots(1, 4, figsize=(2*4,1.2),
@@ -231,11 +235,12 @@ class Poisson(DiffNet2DFEM):
 def main():
     # u_tensor = np.random.randn(1,1,256,256)
 
-    domain_size = 128
+    domain_size = 64
 
     u_tensor = np.ones((1,1,domain_size,domain_size))
-    network = AE(in_channels=3, out_channels=1, dims=64, n_downsample=3)
-    # network = GoodNetwork(in_channels=3, out_channels=1, in_dim=64, out_dim=64)
+    network = AE(in_channels=3, out_channels=1, dims=128, n_downsample=4)
+    # network = GoodNetwork(in_channels=3, out_channels=1, in_dim=domain_size, out_dim=domain_size, lowest_dim=4, filters=64)
+    # network = GoodGenerator()
     dataset = RectangleManufactured(domain_size=domain_size)
     basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=3e-4)
 
@@ -251,7 +256,9 @@ def main():
         dirpath=logger.log_dir, filename='{epoch}-{step}',
         mode='min', save_last=True)
 
-    trainer = Trainer(gpus=[0],callbacks=[early_stopping],
+    lbfgs_switch = OptimSwitchLBFGS(epochs=100)
+
+    trainer = Trainer(gpus=[0],callbacks=[early_stopping,lbfgs_switch],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
         max_epochs=100, deterministic=True, profiler="simple")
 

@@ -31,10 +31,10 @@ class Rectangle(data.Dataset):
         self.domain = np.ones((domain_size, domain_size))
         # bc1 will be source, u will be set to 1 at these locations
         self.bc1 = np.zeros((domain_size, domain_size))
-        self.bc1[0,:] = 1
+        # self.bc1[0,:] = 1
         # bc2 will be sink, u will be set to 0 at these locations
         self.bc2 = np.zeros((domain_size, domain_size))
-        self.bc2[-1,:] = 1
+        self.bc2[-1,int(0.4*domain_size):int(0.6*domain_size)] = 1
         self.n_samples = 100
         
 
@@ -45,7 +45,7 @@ class Rectangle(data.Dataset):
     def __getitem__(self, index):
         'Generates one sample of data'
         inputs = np.array([self.bc1, self.bc2])
-        forcing = np.zeros_like(self.domain)
+        forcing = np.ones_like(self.domain)*10
         return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
 
 
@@ -61,7 +61,8 @@ class Poisson(DiffNet2DFEM):
         f = forcing_tensor # renaming variable
         
         # extract diffusivity and boundary conditions here
-        nu = torch.nn.functional.sigmoid(network_inp[1].type_as(f))
+        nu = network_inp[1].type_as(f)
+        # nu = torch.clip(torch.nn.functional.sigmoid(network_inp[1].type_as(f)), 0.001, 1.0)
         bc1 = inputs_tensor[:,0:1,:,:]
         bc2 = inputs_tensor[:,1:2,:,:]
 
@@ -79,7 +80,7 @@ class Poisson(DiffNet2DFEM):
         u_y_gp = self.gauss_pt_evaluation_der_y(u)
 
         transformation_jacobian = self.gpw.unsqueeze(-1).unsqueeze(-1).unsqueeze(0).type_as(nu_gp)
-        res_elmwise = 0.5 * transformation_jacobian * (nu_gp * (u_x_gp**2 + u_y_gp**2) - (u_gp * f_gp))
+        res_elmwise = 0.5 * (transformation_jacobian * (nu_gp * (u_x_gp**2 + u_y_gp**2) - (u_gp * f_gp)))**2
         res_elmwise = torch.sum(res_elmwise, 1) 
 
         loss = torch.mean(res_elmwise)
@@ -90,7 +91,8 @@ class Poisson(DiffNet2DFEM):
         f = forcing_tensor # renaming variable
         
         # extract diffusivity and boundary conditions here
-        nu = torch.nn.functional.sigmoid(network_inp[1].type_as(f))
+        nu = network_inp[1].type_as(f)
+        # nu = torch.clip(torch.nn.functional.sigmoid(network_inp[1].type_as(f)), 0.001, 1.0)
         bc1 = inputs_tensor[:,0:1,:,:]
         bc2 = inputs_tensor[:,1:2,:,:]
 
@@ -102,9 +104,11 @@ class Poisson(DiffNet2DFEM):
         nu_gp = self.gauss_pt_evaluation(nu)
         f_gp = self.gauss_pt_evaluation(f)
         u_gp = self.gauss_pt_evaluation(u)
+        u_x_gp = self.gauss_pt_evaluation_der_x(u)
+        u_y_gp = self.gauss_pt_evaluation_der_y(u)
 
         transformation_jacobian = self.gpw.unsqueeze(-1).unsqueeze(-1).unsqueeze(0).type_as(nu_gp)
-        res_elmwise = 0.5 * transformation_jacobian * (nu_gp * u_gp**2 - (u_gp * f_gp))
+        res_elmwise = 0.5 * transformation_jacobian * (nu_gp*(u_x_gp**2 + u_y_gp**2))
         res_elmwise = torch.sum(res_elmwise, 1) 
 
         loss = torch.mean(res_elmwise)
@@ -119,28 +123,30 @@ class Poisson(DiffNet2DFEM):
         Configure optimizer for network parameters
         """
         lr = self.learning_rate
-        opts = [torch.optim.Adam(self.network[0], lr=lr), torch.optim.Adam(self.network[1], lr=lr*5), torch.optim.Adam(self.network[1], lr=lr*10)]
+        opts = [torch.optim.Adam(self.network[0], lr=lr*10), torch.optim.Adam(self.network[1], lr=lr), torch.optim.Adam(self.network[1], lr=lr*10)]
         return opts, []
 
     def training_step(self, batch, batch_idx, optimizer_idx):
     # def training_step(self, batch, batch_idx):
         network_out, inputs_tensor, forcing_tensor = self.forward(batch)
-        if (self.current_epoch%100) < 50:
+        # if (self.current_epoch%100) < 10:
+        #     loss_val = self.loss(network_out, inputs_tensor, forcing_tensor).mean()
+        #     if optimizer_idx is 0:
+        #         self.log('PDE_loss', loss_val.item())
+        #     else:
+        #         loss_val = loss_val*0.0                    
+        # else:
+        # if self.current_epoch%100 == 0 and batch_idx ==  0:
+        #     self.network[1][0].data = self.network[1][0].data + 0.1*torch.randn(self.network[1][0].data.size())
+        if optimizer_idx is 0:
             loss_val = self.loss(network_out, inputs_tensor, forcing_tensor).mean()
-            if optimizer_idx is 0:
-                self.log('PDE_loss', loss_val.item())
-            else:
-                loss_val = loss_val*0.0                    
+            self.log('PDE_loss', loss_val.item())
+        elif optimizer_idx is 1:
+            loss_val = self.compliance(network_out, inputs_tensor, forcing_tensor).mean()
+            self.log('Compliance', loss_val.item())
         else:
-            if optimizer_idx is 0:
-                loss_val = self.loss(network_out, inputs_tensor, forcing_tensor).mean()
-                self.log('PDE_loss', loss_val.item())
-            elif optimizer_idx is 2:
-                loss_val = self.compliance(network_out, inputs_tensor, forcing_tensor).mean()
-                self.log('Compliance', loss_val.item())
-            else:
-                loss_val = (network_out[1].mean() - self.target_vf)**2
-                self.log('VF_constraint', loss_val.item())
+            loss_val = (network_out[1].mean() - self.target_vf)**2 #+ ((network_out[1]*(1 - network_out[1]))).mean()
+            self.log('VF_constraint', loss_val.item())
 
         return {"loss": loss_val}
 
@@ -188,7 +194,8 @@ class Poisson(DiffNet2DFEM):
         f = forcing_tensor # renaming variable
         
         # extract diffusivity and boundary conditions here
-        nu = torch.nn.functional.sigmoid(network_inp[1].type_as(f))
+        nu = torch.clip(torch.nn.functional.sigmoid(network_inp[1].type_as(f)), 0.001, 1.0)
+        # nu = torch.relu(network_inp[1].type_as(f)) + 0.001
         bc1 = inputs_tensor[:,0:1,:,:]
         bc2 = inputs_tensor[:,1:2,:,:]
 
@@ -210,6 +217,8 @@ class Poisson(DiffNet2DFEM):
 
 def main():
     domain_size = 64
+    # u_tensor = np.ones((1,1,domain_size,domain_size))
+    # nu_tensor = np.ones((1,1,domain_size,domain_size))
     u_tensor = np.random.randn(1,1,domain_size,domain_size)
     nu_tensor = np.random.randn(1,1,domain_size,domain_size)
     network1 = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
