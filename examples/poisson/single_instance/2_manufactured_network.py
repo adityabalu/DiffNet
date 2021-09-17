@@ -33,7 +33,7 @@ class OptimSwitchLBFGS(Callback):
 
     def on_epoch_start(self, trainer, pl_module):
         if trainer.current_epoch == self.switch_epoch:
-            opts = [torch.optim.LBFGS(pl_module.network.parameters(), lr=1.0, max_iter=1)]
+            opts = [torch.optim.LBFGS(pl_module.network.parameters(), lr=1.0, max_iter=10)]
             trainer.optimizers = opts
 
 
@@ -70,7 +70,7 @@ class Poisson(DiffNet2DFEM):
         u_y_gp = self.gauss_pt_evaluation_der_y(u)
 
         transformation_jacobian = self.gpw.unsqueeze(-1).unsqueeze(-1).unsqueeze(0).type_as(nu_gp)
-        res_elmwise = transformation_jacobian * ((0.5 * nu_gp * (u_x_gp**2 + u_y_gp**2) - (u_gp * f_gp)))
+        res_elmwise = (transformation_jacobian * (0.5 * nu_gp * (u_x_gp**2 + u_y_gp**2) - (u_gp * f_gp)))
         res_elmwise = torch.sum(res_elmwise, 1) 
 
         loss = torch.mean(res_elmwise)
@@ -235,11 +235,11 @@ class Poisson(DiffNet2DFEM):
 def main():
     # u_tensor = np.random.randn(1,1,256,256)
 
-    domain_size = 64
+    domain_size = 256
 
     u_tensor = np.ones((1,1,domain_size,domain_size))
-    network = AE(in_channels=3, out_channels=1, dims=128, n_downsample=4)
-    # network = GoodNetwork(in_channels=3, out_channels=1, in_dim=domain_size, out_dim=domain_size, lowest_dim=4, filters=64)
+    network = AE(in_channels=3, out_channels=1, dims=16, n_downsample=5)
+    # network = GoodNetwork(in_channels=3, out_channels=1, in_dim=domain_size, out_dim=domain_size, lowest_dim=4, filters=32)
     # network = GoodGenerator()
     dataset = RectangleManufactured(domain_size=domain_size)
     basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=3e-4)
@@ -256,11 +256,11 @@ def main():
         dirpath=logger.log_dir, filename='{epoch}-{step}',
         mode='min', save_last=True)
 
-    lbfgs_switch = OptimSwitchLBFGS(epochs=100)
+    lbfgs_switch = OptimSwitchLBFGS(epochs=10)
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping,lbfgs_switch],
-        checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=100, deterministic=True, profiler="simple")
+        checkpoint_callback=checkpoint, precision=64, logger=[logger,csv_logger],
+        max_epochs=150, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training

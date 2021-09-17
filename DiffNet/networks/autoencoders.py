@@ -10,19 +10,27 @@ class Encoder(nn.Module):
         # Initial convolution block
         layers = [
             nn.ReflectionPad2d(3),
-            nn.Conv2d(in_channels, dim, 7),
+            nn.Conv2d(in_channels, dim*2, 7),
             nn.InstanceNorm2d(dim),
             nn.LeakyReLU(0.2, inplace=True),
         ]
 
         # Downsampling
-        for _ in range(n_downsample):
-            layers += [
-                nn.Conv2d(dim, dim * 2, 4, stride=2, padding=1),
-                nn.InstanceNorm2d(dim * 2),
-                nn.ReLU(inplace=True),
-            ]
-            dim *= 2
+        for i in range(n_downsample):
+            if i <= 3:
+                layers += [
+                    nn.Conv2d(dim*2*(i+1), dim * (i+2)*2, 8, stride=2, padding=1),
+                    nn.InstanceNorm2d(dim * (i+2)*2),
+                    nn.ReLU(inplace=True),
+                ]
+            else:
+                layers += [
+                    nn.Conv2d(dim*2*(5), dim * (5)*2, 8, stride=2, padding=1),
+                    nn.InstanceNorm2d(dim * (5)*2),
+                    nn.ReLU(inplace=True),
+                ]
+
+
 
         self.model_blocks = nn.Sequential(*layers, nn.Tanh())
 
@@ -33,33 +41,43 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, out_channels=3, dim=64, n_upsample=3, encoder_type='convolutional', activation='sigmoid'):
+    def __init__(self, out_channels=3, dim=64, n_upsample=3, encoder_type='convolutional', activation='relu'):
         super(Decoder, self).__init__()
 
         layers = []
-        dim = dim * 2 ** n_upsample
+        dim = dim 
 
 
         # Upsampling
-        for _ in range(n_upsample):
-            layers += [
-                nn.ConvTranspose2d(dim, dim // 2, 4, stride=2, padding=1),
-                nn.InstanceNorm2d(dim // 2),
-                nn.LeakyReLU(0.2, inplace=True),
-            ]
-            dim = dim // 2
+        for i in reversed(range(n_upsample)):
+            # print(i)
+            if i > 3:
+                print('Arjuna')
+                layers += [
+                    nn.ConvTranspose2d(dim * (5)*2, dim * (5)*2, 8, stride=2, padding=1),
+                    nn.InstanceNorm2d(dim * (5)*2),
+                    nn.LeakyReLU(0.2, inplace=True),
+                ]
+            else:
+                layers += [
+                    nn.ConvTranspose2d(dim * (i + 2)*2, dim * (i + 1)*2, 8, stride=2, padding=1),
+                    nn.InstanceNorm2d(dim * (i + 1)*2),
+                    nn.LeakyReLU(0.2, inplace=True),
+                ]
 
         # Output layer
-        layers += [nn.ReflectionPad2d(3), nn.Conv2d(dim, out_channels, 7)]
+        # layers += [nn.ReflectionPad2d(3), nn.Conv2d(dim, out_channels, 7)]
+        layers += [nn.ReflectionPad2d(4), nn.Conv2d(dim * (i + 1)*2, out_channels, 3), nn.Conv2d(out_channels, out_channels, 3)]
 
         self.model_blocks = nn.Sequential(*layers)
-        if activation == 'sigmoid':
-            self.activation = nn.Sigmoid()
-        elif activation == 'relu':
-            self.activation = nn.ReLU()
+        # if activation == 'sigmoid':
+        #     self.activation = nn.Sigmoid()
+        # elif activation == 'relu':
+        #     self.activation = nn.ReLU()
 
     def forward(self, x):
-        x = self.activation(self.model_blocks(x))
+        # print(x.shape)
+        x = self.model_blocks(x)
         return x
 
 
