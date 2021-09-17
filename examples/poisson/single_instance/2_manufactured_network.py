@@ -235,10 +235,10 @@ class Poisson(DiffNet2DFEM):
 def main():
     # u_tensor = np.random.randn(1,1,256,256)
 
-    domain_size = 16
+    domain_size = 64
 
     u_tensor = np.ones((1,1,domain_size,domain_size))
-    network = AE(in_channels=3, out_channels=1, dims=16, n_downsample=3)
+    network = AE(in_channels=3, out_channels=1, dims=8, n_downsample=2)
     # network = GoodNetwork(in_channels=3, out_channels=1, in_dim=domain_size, out_dim=domain_size, lowest_dim=4, filters=32)
     # network = GoodGenerator()
     dataset = RectangleManufactured(domain_size=domain_size)
