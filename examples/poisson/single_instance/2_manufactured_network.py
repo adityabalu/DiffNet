@@ -235,10 +235,10 @@ class Poisson(DiffNet2DFEM):
 def main():
     # u_tensor = np.random.randn(1,1,256,256)
 
-    domain_size = 256
+    domain_size = 8
 
     u_tensor = np.ones((1,1,domain_size,domain_size))
-    network = AE(in_channels=3, out_channels=1, dims=16, n_downsample=5)
+    network = AE(in_channels=3, out_channels=1, dims=16, n_downsample=2)
     # network = GoodNetwork(in_channels=3, out_channels=1, in_dim=domain_size, out_dim=domain_size, lowest_dim=4, filters=32)
     # network = GoodGenerator()
     dataset = RectangleManufactured(domain_size=domain_size)
@@ -256,7 +256,7 @@ def main():
         dirpath=logger.log_dir, filename='{epoch}-{step}',
         mode='min', save_last=True)
 
-    lbfgs_switch = OptimSwitchLBFGS(epochs=10)
+    lbfgs_switch = OptimSwitchLBFGS(epochs=1)
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping,lbfgs_switch],
         checkpoint_callback=checkpoint, precision=64, logger=[logger,csv_logger],
