@@ -7,9 +7,10 @@ import argparse
 
 def calc_mean_stddev(X):
     mean = np.mean(X, axis=0)
-    var = (X-mean)**2
-    var = np.mean(var, axis=0)
-    std = np.sqrt(var)
+    std = np.std(X, axis=0)
+    # var = (X-mean)**2
+    # var = np.mean(var, axis=0)
+    # std = np.sqrt(var)
     return mean, std
 
 def calc_mean_stddev_from_file():
