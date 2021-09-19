@@ -321,7 +321,7 @@ class GoodGenerator(nn.Module):
         self.resize_factor = int(np.log2(np.sqrt(self.output_dim)/64.0))
         # print(self.resize_factor)
         self.res_list = []
-        self.ln1 = nn.Linear(input_dim, 8*4*4*self.dim)
+        self.ln1 = nn.Linear(input_dim*3, 8*4*4*self.dim)
         self.frb = ResidualBlock(1, 8*self.dim,3)
         self.rb1 = ResidualBlock(8*self.dim, 8*self.dim, 5, resample = 'up')
         for i in range(self.resize_factor):    
@@ -340,9 +340,10 @@ class GoodGenerator(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, input, lv=None):
-        input = input.view(-1, 1, DIM*DIM)
+        input = input.view(-1, 1, DIM*DIM*3)
         if lv:
             input = torch.cat([input, lv], dim=1)
+        # print(input.size())
         output = self.ln1(input.contiguous())
         #output = self.frb(output)
         output = output.view(-1, 8*self.dim, 4, 4)

@@ -128,9 +128,8 @@ class DiffNetFDM(PDE):
         self.nsd = 2
         self.ktype = 'fdm'
         self.stencil_len = 3
-        self.output_size = self.domain_size
 
-        padding_d1, ker_x, ker_y, ker_z, padding_d2, ker_xx, ker_yy, ker_zz = get_deriv_kernels(self.nsd, self.ktype, self.stencil_len, self.output_size)
+        padding_d1, ker_x, ker_y, ker_z, padding_d2, ker_xx, ker_yy, ker_zz = get_deriv_kernels(self.nsd, self.ktype, self.stencil_len, self.domain_size)
         # corr_matX, corr_matY, corr_matX_d2, corr_matY_d2 = get_sobel_correction_matrix(self.nsd, self.output_size, padding_d1, padding_d2)
 
         # self.stencil_len = self.stencil_len
