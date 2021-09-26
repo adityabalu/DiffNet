@@ -92,9 +92,12 @@ class Poisson(DiffNet2DFEM):
             fig.colorbar(im0, ax=axs[idx,0])
             im1 = axs[idx][1].imshow(u,cmap='jet')
             fig.colorbar(im1, ax=axs[idx,1])  
-        plt.savefig(os.path.join(output_path, 'query_contour_' + str(self.current_epoch) + '.png'))
+        plt.savefig(os.path.join(output_path, 'query_contour_' + '.png'))
         # self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
+
+        npz_filepath = os.path.join(output_path, 'query_data_' + '.npz')
+        np.savez(npz_filepath, u=u, k=k)
 
     def query_statistical(self, args):
         output_path = args.model_dir
@@ -204,10 +207,10 @@ def main():
     network = torch.load(os.path.join(case_dir, 'network.pt'))
     basecase = Poisson(network, dataset, batch_size=batch_size, domain_size=domain_size, learning_rate=0.01)
     # print(next(basecase.network.parameters()))
-    # basecase.query_and_plot(args)
     # trainer = Trainer()
     # trainer.predict(basecase, dataset)
 
+    # basecase.query_and_plot(args)
     basecase.query_statistical(args)
 
 if __name__=="__main__":

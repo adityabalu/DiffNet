@@ -169,6 +169,9 @@ class Poisson(DiffNet2DFEM):
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
 
+        # npz_filepath = os.path.join(self.logger[0].log_dir, 'outdata_' + str(self.current_epoch) + '.npz')
+        # np.savez(npz_filepath, u=u, u_exact=u_exact, f=f)
+
     def calc_l2_err(self):
         cn = lambda j,n: [j,j+1,j+n,(j+1)+n]
         N = lambda x,y: (1./4.)*np.array([(1-x)*(1-y), (1+x)*(1-y), (1-x)*(1+y), (1+x)*(1+y)])
