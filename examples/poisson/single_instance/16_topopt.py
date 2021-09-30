@@ -66,9 +66,9 @@ class MedianPool2d(nn.Module):
     def forward(self, x):
         # using existing pytorch functions and tensor ops so that we get autograd, 
         # would likely be more efficient to implement from scratch at C/Cuda level
-        x = F.pad(x, self._padding(x), mode='reflect')
-        x = x.unfold(2, self.k[0], self.stride[0]).unfold(3, self.k[1], self.stride[1])
-        x = x.contiguous().view(x.size()[:4] + (-1,)).median(dim=-1)[0]
+        # x = F.pad(x, self._padding(x), mode='reflect')
+        # x = x.unfold(2, self.k[0], self.stride[0]).unfold(3, self.k[1], self.stride[1])
+        # x = x.contiguous().view(x.size()[:4] + (-1,)).median(dim=-1)[0]
         return x
 
 class Rectangle(data.Dataset):
@@ -84,8 +84,8 @@ class Rectangle(data.Dataset):
         # bc2 will be sink, u will be set to 0 at these locations
         self.bc2 = np.zeros((domain_size, domain_size))
         # self.bc2[-1,int(0.4*domain_size):int(0.6*domain_size)] = 1
-        self.bc2[-1,:] = 1
         self.bc2[:,0] = 1
+        self.bc2[0,:] = 1
         self.n_samples = 100
         
 
@@ -96,7 +96,7 @@ class Rectangle(data.Dataset):
     def __getitem__(self, index):
         'Generates one sample of data'
         inputs = np.array([self.bc1, self.bc2])
-        forcing = np.ones_like(self.domain)*10
+        forcing = np.ones_like(self.domain)*1
         return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
 
 
@@ -113,14 +113,13 @@ class Poisson(DiffNet2DFEM):
         f = forcing_tensor # renaming variable
         
         # extract diffusivity and boundary conditions here
-        nu = self.median_filter(0.001 + (1.0 - 0.0)*network_inp[1].type_as(f)**2)
+        nu = self.median_filter(0.001 + (1.0 - 0.0)*network_inp[1].type_as(f)**3)
         # nu = torch.clip(torch.nn.functional.sigmoid(network_inp[1].type_as(f)), 0.001, 1.0)
         bc1 = inputs_tensor[:,0:1,:,:]
         bc2 = inputs_tensor[:,1:2,:,:]
 
         # apply boundary conditions
         u = network_inp[0].type_as(f)
-        u = nu*u
         u = torch.where(bc1>0.5,1.0+u*0.0,u)
         u = torch.where(bc2>0.5,u*0.0,u)
 
@@ -132,7 +131,7 @@ class Poisson(DiffNet2DFEM):
         u_y_gp = self.gauss_pt_evaluation_der_y(u)
 
         transformation_jacobian = self.gpw.unsqueeze(-1).unsqueeze(-1).unsqueeze(0).type_as(nu_gp)
-        res_elmwise = 0.5 * (transformation_jacobian * (nu_gp * (u_x_gp**2 + u_y_gp**2) + (u_gp * f_gp)))**2
+        res_elmwise = (transformation_jacobian * (0.5*nu_gp * (u_x_gp**2 + u_y_gp**2) - (u_gp*f_gp)))
         res_elmwise = torch.sum(res_elmwise, 1) 
 
         loss = torch.mean(res_elmwise)
@@ -143,7 +142,7 @@ class Poisson(DiffNet2DFEM):
         f = forcing_tensor # renaming variable
         
         # extract diffusivity and boundary conditions here
-        nu = self.median_filter(0.001 + (1.0 - 0.0)*network_inp[1].type_as(f)**1)
+        nu = self.median_filter(0.001 + (1.0 - 0.0)*network_inp[1].type_as(f)**3)
         # nu = torch.clip(torch.nn.functional.sigmoid(network_inp[1].type_as(f)), 0.001, 1.0)
         bc1 = inputs_tensor[:,0:1,:,:]
         bc2 = inputs_tensor[:,1:2,:,:]
@@ -160,7 +159,7 @@ class Poisson(DiffNet2DFEM):
         u_y_gp = self.gauss_pt_evaluation_der_y(u)
 
         transformation_jacobian = self.gpw.unsqueeze(-1).unsqueeze(-1).unsqueeze(0).type_as(nu_gp)
-        res_elmwise = 0.5 * transformation_jacobian * (nu_gp*(u_x_gp**2 + u_y_gp**2))**2
+        res_elmwise = 0.5 * transformation_jacobian * (nu_gp*(u_x_gp**2 + u_y_gp**2))**2 + 1000*(transformation_jacobian * (0.5*nu_gp * (u_x_gp**2 + u_y_gp**2) - (u_gp*f_gp)))
         res_elmwise = torch.sum(res_elmwise, 1) 
 
         loss = torch.mean(res_elmwise)
@@ -176,7 +175,7 @@ class Poisson(DiffNet2DFEM):
         """
         lr = self.learning_rate
         # opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
-        opts = [torch.optim.Adam(self.network[0], lr=10*lr), torch.optim.Adam(self.network[1], lr=lr), torch.optim.Adam(self.network[1], lr=10*lr)]
+        opts = [torch.optim.Adam(self.network[0], lr=lr), torch.optim.Adam(self.network[1], lr=lr), torch.optim.Adam(self.network[1], lr=10*lr)]
         return opts, []
 
     def training_step(self, batch, batch_idx, optimizer_idx):
@@ -196,11 +195,11 @@ class Poisson(DiffNet2DFEM):
             loss_val = self.loss(network_out, inputs_tensor, forcing_tensor).mean()
             self.log('PDE_loss', loss_val.item())
         elif optimizer_idx is 1:
-            nu = self.median_filter(0.001 + (1.0 - 0.0)*network_out[1]**1)
-            loss_val = 10*self.compliance(network_out, inputs_tensor, forcing_tensor).mean() + (nu.sum() - self.target_vf_sum)**2
+            nu = self.median_filter(0.001 + (1.0 - 0.0)*network_out[1]**3)
+            loss_val = self.compliance(network_out, inputs_tensor, forcing_tensor).mean()
             self.log('Compliance', loss_val.item())
         else:
-            nu = self.median_filter(0.001 + (1.0 - 0.0)*network_out[1]**1)
+            nu = self.median_filter(0.001 + (1.0 - 0.0)*network_out[1]**3)
             loss_val = (nu.sum() - self.target_vf_sum)**2
             self.log('VF_constraint', loss_val.item())
 
@@ -251,7 +250,7 @@ class Poisson(DiffNet2DFEM):
         
         # extract diffusivity and boundary conditions here
         # nu = torch.clip(torch.nn.functional.sigmoid(network_inp[1].type_as(f)), 0.001, 1.0)
-        nu = self.median_filter(0.001 + (1.0 - 0.0)*network_inp[1].type_as(f)**1)
+        nu = self.median_filter(0.001 + (1.0 - 0.0)*network_inp[1].type_as(f)**3)
         # nu = torch.relu(network_inp[1].type_as(f)) + 0.001
         bc1 = inputs_tensor[:,0:1,:,:]
         bc2 = inputs_tensor[:,1:2,:,:]
@@ -263,10 +262,10 @@ class Poisson(DiffNet2DFEM):
 
         k = nu.squeeze().detach().cpu()
         u = u.squeeze().detach().cpu()
-
+        print(u.max(), k.mean())
         im0 = axs[0].imshow(k,cmap='jet', vmin=0.0, vmax=1.0)
         fig.colorbar(im0, ax=axs[0])
-        im1 = axs[1].imshow(u,cmap='jet', vmin=0.0,  vmax=1.0)
+        im1 = axs[1].imshow(u,cmap='jet')
         fig.colorbar(im1, ax=axs[1])  
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
