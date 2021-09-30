@@ -23,7 +23,7 @@ from DiffNet.networks.wgan import GoodNetwork
 from DiffNet.networks.wgan_old import GoodGenerator
 from DiffNet.networks.autoencoders import AE
 from DiffNet.DiffNetFEM import DiffNet2DFEM
-from DiffNet.datasets.single_instances.rectangles import RectangleManufactured
+from DiffNet.datasets.single_instances.rectangles import RectangleManufacturedNonZeroBC
 
 from pytorch_lightning.callbacks.base import Callback
 
@@ -41,13 +41,14 @@ class Poisson(DiffNet2DFEM):
     """docstring for Poisson"""
     def __init__(self, network, dataset, **kwargs):
         super(Poisson, self).__init__(network, dataset, **kwargs)
+        self.om = dataset.om
         x = np.linspace(0,1,self.domain_size)
         y = np.linspace(0,1,self.domain_size)
         xx, yy = np.meshgrid(x,y)
         self.u_exact = torch.tensor(self.exact_solution(xx,yy))
 
     def exact_solution(self, x,y):
-        return np.sin(math.pi*x)*np.sin(math.pi*y)
+        return np.exp(-self.om*x)*np.sin(self.om*y)
 
     def loss(self, u, inputs_tensor, forcing_tensor):
 
@@ -58,9 +59,38 @@ class Poisson(DiffNet2DFEM):
         bc1 = inputs_tensor[:,1:2,:,:]
         bc2 = inputs_tensor[:,2:3,:,:]
 
+        # print("size(u_exact) = ", self.u_exact.shape); exit()
+        u_exact = self.u_exact.unsqueeze(0).unsqueeze(0).type_as(nu)        
         # apply boundary conditions
-        u = torch.where(bc1>0.5,1.0+u*0.0,u)
+        u = torch.where(bc1>0.5,u_exact,u)
         u = torch.where(bc2>0.5,u*0.0,u)
+
+        # print("size(bc1) = ", bc1.shape)
+        # print("size(bc2) = ", bc2.shape)
+
+        # gg = u.squeeze().detach().cpu().numpy()
+        # hh = u_exact.squeeze().detach().cpu().numpy()
+        # bc11 = bc1.squeeze().detach().cpu().numpy()
+        # bc22 = bc2.squeeze().detach().cpu().numpy()
+        # plt.figure(figsize=(20,10))
+        # plt.subplot(2,2,1)
+        # plt.imshow(bc11,cmap='jet')
+        # plt.colorbar()
+        # plt.subplot(2,2,2)
+        # plt.imshow(bc22,cmap='jet')
+        # plt.colorbar()
+        # plt.subplot(2,2,2)
+        # plt.plot(gg[:,0])
+        # plt.subplot(2,2,1)
+        # plt.plot(gg[0,:])
+        # plt.subplot(2,2,2)
+        # plt.plot(gg[-1,:])
+        # plt.subplot(2,2,3)
+        # plt.plot(gg[:,0])
+        # plt.subplot(2,2,4)
+        # plt.plot(gg[:,-1])
+        # plt.savefig('test.png')
+        # exit()
 
 
         nu_gp = self.gauss_pt_evaluation(nu)
@@ -145,8 +175,9 @@ class Poisson(DiffNet2DFEM):
         bc1 = inputs_tensor[:,1:2,:,:]
         bc2 = inputs_tensor[:,2:3,:,:]
 
+        ubc = self.u_exact.unsqueeze(0).unsqueeze(0).type_as(nu)
         # apply boundary conditions
-        u = torch.where(bc1>0.5,1.0+u*0.0,u)
+        u = torch.where(bc1>0.5,ubc,u)
         u = torch.where(bc2>0.5,u*0.0,u)
 
 
@@ -238,13 +269,13 @@ class Poisson(DiffNet2DFEM):
 def main():
     # u_tensor = np.random.randn(1,1,256,256)
 
-    domain_size = 64
+    domain_size = 32
 
     u_tensor = np.ones((1,1,domain_size,domain_size))
-    network = AE(in_channels=3, out_channels=1, dims=8, n_downsample=2)
+    network = AE(in_channels=3, out_channels=1, dims=8, n_downsample=3)
     # network = GoodNetwork(in_channels=3, out_channels=1, in_dim=domain_size, out_dim=domain_size, lowest_dim=4, filters=32)
     # network = GoodGenerator()
-    dataset = RectangleManufactured(domain_size=domain_size)
+    dataset = RectangleManufacturedNonZeroBC(domain_size=domain_size)
     basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=3e-4)
 
     # ------------------------
