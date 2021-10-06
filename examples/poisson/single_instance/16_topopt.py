@@ -19,6 +19,7 @@ seed_everything(42)
 
 import DiffNet
 from DiffNet.networks.wgan import GoodNetwork
+from DiffNet.networks.autoencoders import AE
 from DiffNet.DiffNetFEM import DiffNet2DFEM
 from torch.utils import data
 
@@ -87,7 +88,13 @@ class Rectangle(data.Dataset):
         self.bc2[:,0] = 1
         self.bc2[0,:] = 1
         self.n_samples = 100
-        
+
+        x = np.linspace(0,1,domain_size)
+        y = np.linspace(0,1,domain_size)
+        xx, yy = np.meshgrid(x,y)
+        self.xx = xx
+        self.yy = yy
+
 
     def __len__(self):
         'Denotes the total number of samples'
@@ -95,7 +102,7 @@ class Rectangle(data.Dataset):
 
     def __getitem__(self, index):
         'Generates one sample of data'
-        inputs = np.array([self.bc1, self.bc2])
+        inputs = np.array([self.bc1, self.bc2, self.xx, self.yy])
         forcing = np.ones_like(self.domain)*1
         return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
 
@@ -117,21 +124,26 @@ class Poisson(DiffNet2DFEM):
         # nu = torch.clip(torch.nn.functional.sigmoid(network_inp[1].type_as(f)), 0.001, 1.0)
         bc1 = inputs_tensor[:,0:1,:,:]
         bc2 = inputs_tensor[:,1:2,:,:]
+        xx = inputs_tensor[:,2:3,:,:]
+        yy = inputs_tensor[:,3:4,:,:]
 
         # apply boundary conditions
         u = network_inp[0].type_as(f)
         u = torch.where(bc1>0.5,1.0+u*0.0,u)
         u = torch.where(bc2>0.5,u*0.0,u)
-
+        v = (xx**2 + yy**2)*u
 
         nu_gp = self.gauss_pt_evaluation(nu)
         f_gp = self.gauss_pt_evaluation(f)
         u_gp = self.gauss_pt_evaluation(u)
+        v_gp = self.gauss_pt_evaluation(v)
         u_x_gp = self.gauss_pt_evaluation_der_x(u)
+        v_x_gp = self.gauss_pt_evaluation_der_x(v)
         u_y_gp = self.gauss_pt_evaluation_der_y(u)
+        v_y_gp = self.gauss_pt_evaluation_der_y(v)
 
         transformation_jacobian = self.gpw.unsqueeze(-1).unsqueeze(-1).unsqueeze(0).type_as(nu_gp)
-        res_elmwise = (transformation_jacobian * (0.5*nu_gp * (u_x_gp**2 + u_y_gp**2) - (u_gp*f_gp)))
+        res_elmwise = (transformation_jacobian * (0.5*nu_gp * (u_x_gp*v_x_gp + u_y_gp*v_y_gp) - (v_gp*f_gp)))**2 
         res_elmwise = torch.sum(res_elmwise, 1) 
 
         loss = torch.mean(res_elmwise)
@@ -159,7 +171,7 @@ class Poisson(DiffNet2DFEM):
         u_y_gp = self.gauss_pt_evaluation_der_y(u)
 
         transformation_jacobian = self.gpw.unsqueeze(-1).unsqueeze(-1).unsqueeze(0).type_as(nu_gp)
-        res_elmwise = 0.5 * transformation_jacobian * (nu_gp*(u_x_gp**2 + u_y_gp**2))**2 + 1000*(transformation_jacobian * (0.5*nu_gp * (u_x_gp**2 + u_y_gp**2) - (u_gp*f_gp)))
+        res_elmwise = -10  * transformation_jacobian * (f_gp*u_gp)
         res_elmwise = torch.sum(res_elmwise, 1) 
 
         loss = torch.mean(res_elmwise)
@@ -167,7 +179,8 @@ class Poisson(DiffNet2DFEM):
 
     def forward(self, batch):
         inputs_tensor, forcing_tensor = batch
-        return [self.network[0][0], self.network[1][0]], inputs_tensor, forcing_tensor
+        # return [self.network[0][0], self.network[1][0]], inputs_tensor, forcing_tensor
+        return [self.network[0](self.network[1][0]), self.network[1][0]], inputs_tensor, forcing_tensor
 
     def configure_optimizers(self):
         """
@@ -175,7 +188,8 @@ class Poisson(DiffNet2DFEM):
         """
         lr = self.learning_rate
         # opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
-        opts = [torch.optim.Adam(self.network[0], lr=lr), torch.optim.Adam(self.network[1], lr=lr), torch.optim.Adam(self.network[1], lr=10*lr)]
+        # opts = [torch.optim.Adam(self.network[0], lr=lr), torch.optim.Adam(self.network[1], lr=lr), torch.optim.Adam(self.network[1], lr=lr)]
+        opts = [torch.optim.Adam(self.network[0].parameters(), lr=lr), torch.optim.Adam(self.network[1], lr=lr), torch.optim.Adam(self.network[1], lr=lr)]
         return opts, []
 
     def training_step(self, batch, batch_idx, optimizer_idx):
@@ -194,14 +208,16 @@ class Poisson(DiffNet2DFEM):
         if optimizer_idx is 0:
             loss_val = self.loss(network_out, inputs_tensor, forcing_tensor).mean()
             self.log('PDE_loss', loss_val.item())
-        elif optimizer_idx is 1:
-            nu = self.median_filter(0.001 + (1.0 - 0.0)*network_out[1]**3)
-            loss_val = self.compliance(network_out, inputs_tensor, forcing_tensor).mean()
-            self.log('Compliance', loss_val.item())
         else:
-            nu = self.median_filter(0.001 + (1.0 - 0.0)*network_out[1]**3)
-            loss_val = (nu.sum() - self.target_vf_sum)**2
-            self.log('VF_constraint', loss_val.item())
+            loss_val = torch.zeros((1), requires_grad=True)
+        # elif optimizer_idx is 1:
+        #     nu = self.median_filter(0.001 + (1.0 - 0.0)*network_out[1]**3)
+        #     loss_val = self.compliance(network_out, inputs_tensor, forcing_tensor).mean()
+        #     self.log('Compliance', loss_val.item())
+        # else:
+        #     nu = self.median_filter(0.001 + (1.0 - 0.0)*network_out[1]**3)
+        #     loss_val = (nu.sum() - self.target_vf_sum)**2
+        #     self.log('VF_constraint', loss_val.item())
 
         return {"loss": loss_val}
 
@@ -273,11 +289,12 @@ class Poisson(DiffNet2DFEM):
 
 def main():
     domain_size = 64
+    network1 = AE(in_channels=1, out_channels=1, dims=16, n_downsample=3)
+    nu_tensor = np.ones((1,1,domain_size,domain_size))
     u_tensor = np.ones((1,1,domain_size,domain_size))
-    nu_tensor = np.ones((1,1,domain_size,domain_size))*0.4
-    # u_tensor = np.random.randn(1,1,domain_size,domain_size)
+    u_tensor = np.random.randn(1,1,domain_size,domain_size)
     # nu_tensor = np.random.randn(1,1,domain_size,domain_size)
-    network1 = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
+    # network1 = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
     network2 = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(nu_tensor), requires_grad=True)])
     dataset = Rectangle(domain_size=domain_size)
     basecase = Poisson([network1, network2], dataset, batch_size=1)
