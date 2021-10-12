@@ -12,5 +12,5 @@ setup(
     license='MIT',
     author='Biswajit Khara/Aditya Balu',
     author_email='{bkhara,baditya}@iastate.edu',
-    packages=['DiffNet'],
+    packages=find_packages(),
 )
