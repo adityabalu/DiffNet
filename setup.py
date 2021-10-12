@@ -13,5 +13,5 @@ setup(
     author='Biswajit Khara/Aditya Balu',
     author_email='{bkhara,baditya}@iastate.edu',
     packages=find_packages(),
-    version='0.0.1',
+    version='0.0.2',
 )
