@@ -4,7 +4,9 @@ import torch.nn.functional as F
 import numpy as np
 from torch.utils.data import Dataset
 
-from DiffNet.networks.autoencoders import AE
+from tqdm import tqdm
+
+from networks.autoencoders import AE
 
 """
 Matsci data loader
@@ -38,21 +40,21 @@ class MicrostructureDataset(Dataset):
 
 
 
-def training_epoch(model, optimizer, data):
-    gen_data = model(torch.randn_like(real_data))
+def training_epoch(model, optimizer, data, noise):
+    gen_data = model(noise)
 
     # calculate losses
-    l2_loss = F.mse_loss(input=gen_data, target=fake_data)
+    l2_loss = F.mse_loss(input=gen_data[:,0], target=data)
 
     optimizer.zero_grad()
     l2_loss.backward()
     optimizer.step()
 
-    return l2_loss / data.shape(0)
+    return l2_loss
 
 def load_data(path_to_folder):
     dataset = MicrostructureDataset(path_to_folder)
-    dataset_loader = torch.utils.data.DataLoader(dataset, batch_size=64, shuffle=True, drop_last=True, pin_memory=True)
+    dataset_loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, drop_last=True, pin_memory=True)
     return dataset_loader
 
 def training_data_loader():
@@ -81,15 +83,17 @@ def main(args):
     # prints
     print("# of params in model: ", sum(a.numel() for a in model.parameters()))
 
+    try:
+        real_data, _, _ = dataiter.next()
+    except StopIteration:
+        dataiter = iter(dataloader)
+        real_data, _, _ = dataiter.next()
+    real_data = real_data.to(device)
+
     # training loop
     for i in range(args.epoch):
-        try:
-            real_data, _, _ = next(dataiter)
-        except StopIteration:
-            dataiter = iter(dataloader)
-            real_data, _, _ = dataiter.next()
-        real_data = real_data.to(device)
-        print(training_epoch(model, optimizer, real_data))
+        noise = (torch.randn((1,2,128,128)) * 100).to(device)
+        print('Loss: ',training_epoch(model, optimizer, real_data, noise), ' from batch ', i , ' of ', args.epoch)
 
     # save training outputs and model checkpoints
     torch.save(model.state_dict(), os.path.join(output_path, "microstructure_AE.pt"))
@@ -97,7 +101,7 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='DEQ model for implicit topopt')
-    parser.add_argument('-ep', '--epoch', default=500, type=int,
+    parser.add_argument('-ep', '--epoch', default=2500, type=int,
                         help='How many epochs would you like to train for?')
     hparams = parser.parse_args()
     main(hparams)
