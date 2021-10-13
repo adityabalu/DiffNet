@@ -1,5 +1,5 @@
 from setuptools import setup, find_packages
-from torch.utils.cpp_extension import BuildExtension, CppExtension,CUDAExtension
+# from torch.utils.cpp_extension import BuildExtension, CppExtension,CUDAExtension
 import os
 
 def read(file_name):
