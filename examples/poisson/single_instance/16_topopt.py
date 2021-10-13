@@ -366,7 +366,8 @@ def main():
     #network2 = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(nu_tensor), requires_grad=True)])
     #network2 = AE(in_channels=1, out_channels=1, dims=16, n_downsample=3)
 
-    joint_network = AE(in_channels=2, out_channels=2, dims=16, n_downsample=3)
+    # joint_network = AE(in_channels=2, out_channels=2, dims=16, n_downsample=3)
+    joint_network = torch.load('/data/EthanHerron/TopologyOptimization/DiffNet/DiffNet/pretrained_AE/microstructure_AE.pt')
 
     dataset = Rectangle(domain_size=domain_size)
     
