@@ -109,3 +109,7 @@ examples/poisson/ImageDataset/
 examples/eiqonal/single_instance/curve_reconstruction/Sol1.png
 
 examples/eiqonal/single_instance/curve_reconstruction/Sol2.png
+
+*.png
+
+*.mp4

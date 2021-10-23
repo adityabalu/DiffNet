@@ -45,13 +45,14 @@ class LDC(data.Dataset):
         self.bc1[:,0:1] = 1.0
         self.bc1[:,-1:] = 1.0
         self.bc1[0:1,:] = 1.0
+        self.bc1[-1:,:] = 1.0
 
         self.bc2 = np.zeros_like(xx)
         self.bc2_val = np.zeros_like(xx)
-        self.bc2[-1:,:] = 1.0
+        # self.bc2[-1:,:] = 1.0
 
         self.bc3 = np.zeros_like(xx)
-        self.bc3[0:1,0:1] = 1.0
+        # self.bc3[0:1,0:1] = 1.0
 
         self.Re = Re
         self.n_samples = 100
@@ -63,7 +64,7 @@ class LDC(data.Dataset):
 
     def __getitem__(self, index):
         'Generates one sample of data'
-        inputs = np.array([self.x, self.bc1, self.bc2, self.bc3])
+        inputs = np.array([self.x, self.y, self.bc1, self.bc2, self.bc3])
 
         forcing = np.ones_like(self.x)*(1/self.Re)
         return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
@@ -84,36 +85,43 @@ class Stokes(DiffNet2DFEM):
 
         # extract diffusivity and boundary conditions here
         x = inputs_tensor[:,0:1,:,:]
-        bc1 = inputs_tensor[:,1:2,:,:]
-        bc2 = inputs_tensor[:,2:3,:,:]
-        bc3 = inputs_tensor[:,3:4,:,:]
+        y = inputs_tensor[:,1:2,:,:]
+        bc1 = inputs_tensor[:,2:3,:,:]
+        bc2 = inputs_tensor[:,3:4,:,:]
+        bc3 = inputs_tensor[:,4:5,:,:]
 
+        fx = 2*math.pi**2*torch.sin(math.pi*x)*torch.cos(math.pi*y) + math.pi*torch.sin(math.pi*y)*torch.cos(math.pi*x)
+        fy = - 2*math.pi**2*torch.sin(math.pi*y)*torch.cos(math.pi*x) + math.pi*torch.sin(math.pi*x)*torch.cos(math.pi*y)
         # apply boundary conditions
-        u = torch.where(bc1>=0.5, u*0.0, u)
-        u = torch.where(bc2>=0.5, u*0.0 + 1.0, u)
+        u = torch.where(bc1>=0.5, torch.sin(math.pi*x)*torch.cos(math.pi*y), u)
+        v = torch.where(bc1>=0.5, -torch.cos(math.pi*x)*torch.sin(math.pi*y), v)
+        p = torch.where(bc1>=0.5, torch.sin(math.pi*x)*torch.sin(math.pi*y), p)
+        # u = torch.where(bc2>=0.5, u*0.0 + 1.0, u)
         # u = torch.where(bc2>=0.5, u*0.0 + 4.0*x*(1-x), u)
 
-        v = torch.where(torch.logical_or((bc1>=0.5),(bc2>=0.5)), v*0.0, v)
+        # v = torch.where(torch.logical_or((bc1>=0.5),(bc2>=0.5)), v*0.0, v)
 
-        p = torch.where(bc3>=0.5, p*0.0, p)
+        # p = torch.where(bc3>=0.5, p*0.0, p)
 
         u_gp = self.gauss_pt_evaluation(u)
         v_gp = self.gauss_pt_evaluation(v)
         p_gp = self.gauss_pt_evaluation(p)
         p_x_gp = self.gauss_pt_evaluation_der_x(p)
-        f_gp = self.gauss_pt_evaluation(f)
+        fx_gp = self.gauss_pt_evaluation(fx)
+        fy_gp = self.gauss_pt_evaluation(fy)
         u_x_gp = self.gauss_pt_evaluation_der_x(u)
         u_y_gp = self.gauss_pt_evaluation_der_y(u)
         v_x_gp = self.gauss_pt_evaluation_der_x(v)
         v_y_gp = self.gauss_pt_evaluation_der_y(v)
 
         transformation_jacobian = self.gpw.unsqueeze(-1).unsqueeze(-1).unsqueeze(0).type_as(u_gp)
-        res_elmwise1 = transformation_jacobian * ((u_x_gp**2 + u_y_gp**2 + v_x_gp**2 + v_y_gp**2)*f_gp - p_gp*(u_x_gp + v_y_gp))**2
+        res_elmwise1 = transformation_jacobian * ((u_x_gp**2 + u_y_gp**2 + v_x_gp**2 + v_y_gp**2) - p_gp*(u_x_gp + v_y_gp) - fx_gp*u_gp - fy_gp*v_gp)**2
         # res_elmwise1 = transformation_jacobian * ((u_x_gp**2 + v_y_gp**2)*f_gp - p_gp*(u_x_gp + v_y_gp))**2
-        # res_elmwise2 = transformation_jacobian * ((u_x_gp + v_y_gp))**2
-        res_elmwise2 = transformation_jacobian * ((p_gp*(u_x_gp + v_y_gp))**2 + 0.01*p_x_gp**2)
+        res_elmwise2 = transformation_jacobian * ((u_x_gp + v_y_gp))**2
+        # res_elmwise2 = transformation_jacobian * ((p_gp*(u_x_gp + v_y_gp))**2 + 0.01*p_x_gp**2)
 
-        res_elmwise = torch.sum(res_elmwise1, 1) + 100*torch.sum(res_elmwise2, 1) 
+        # res_elmwise = 100*torch.sum(res_elmwise2, 1) 
+        res_elmwise = torch.sum(res_elmwise1, 1) # + 100*torch.sum(res_elmwise2, 1) 
         loss = torch.mean(res_elmwise) 
         return loss
 
@@ -127,7 +135,7 @@ class Stokes(DiffNet2DFEM):
         Configure optimizer for network parameters
         """
         lr = self.learning_rate
-        opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
+        opts = [torch.optim.LBFGS(self.network, lr=0.0001, max_iter=1)]
         # opts = [torch.optim.Adam(self.network, lr=lr)]
         schd = []
         # schd = [torch.optim.lr_scheduler.ExponentialLR(opts[0], gamma=0.7)]
@@ -153,17 +161,20 @@ class Stokes(DiffNet2DFEM):
 
         # extract diffusivity and boundary conditions here
         x = inputs_tensor[:,0:1,:,:]
-        bc1 = inputs_tensor[:,1:2,:,:]
-        bc2 = inputs_tensor[:,2:3,:,:]
-        bc3 = inputs_tensor[:,3:4,:,:]
+        y = inputs_tensor[:,1:2,:,:]
+        bc1 = inputs_tensor[:,2:3,:,:]
+        bc2 = inputs_tensor[:,3:4,:,:]
+        bc3 = inputs_tensor[:,4:5,:,:]
 
         # apply boundary conditions
-        u = torch.where(bc1>=0.05, u*0.0, u)
-        u = torch.where(bc2>=0.05, u*0.0 + 1.0, u)
+        # u = torch.where(bc1>=0.05, u*0.0, u)
+        # u = torch.where(bc2>=0.05, u*0.0 + 1.0, u)
 
-        v = torch.where(torch.logical_or((bc1>=0.5),(bc2>=0.5)), v*0.0, v)
-        p = torch.where(bc3>=0.5, p*0.0, p)
-
+        # v = torch.where(torch.logical_or((bc1>=0.5),(bc2>=0.5)), v*0.0, v)
+        # p = torch.where(bc3>=0.5, p*0.0, p)
+        u = torch.where(bc1>=0.5, torch.sin(math.pi*x)*torch.cos(math.pi*y), u)
+        v = torch.where(bc1>=0.5, -torch.cos(math.pi*x)*torch.sin(math.pi*y), v)
+        p = torch.where(bc1>=0.5, torch.sin(math.pi*x)*torch.sin(math.pi*y), p)
         u_x = self.gauss_pt_evaluation_der_x(u)[:,0,:,:].squeeze().detach().cpu()
         v_y = self.gauss_pt_evaluation_der_y(v)[:,0,:,:].squeeze().detach().cpu()
 
@@ -184,7 +195,7 @@ class Stokes(DiffNet2DFEM):
         x = np.linspace(0, 1, u.shape[0])
         y = np.linspace(0, 1, u.shape[1])
 
-        im3 = axs[3].imshow(np.log10(abs(div)),cmap='jet',origin='lower')
+        im3 = axs[3].imshow(div,cmap='jet',origin='lower')
         fig.colorbar(im3, ax=axs[3])  
         im4 = axs[4].imshow((u**2 + v**2)**0.5,cmap='jet',origin='lower')
         fig.colorbar(im4, ax=axs[4])
@@ -216,8 +227,8 @@ class Stokes(DiffNet2DFEM):
                 [0.9961859760956173, 0.9937051792828686]])
 
         plt.figure()
-        plt.plot(baseline_cut[:,0], baseline_cut[:,1], 'k--', label='numerical')
-        plt.plot(yy[:,12], u[:,12], 'k:', label='DiffNet')
+        plt.plot(u[0,:], 'k--', label='u')
+        plt.plot(v[:,0], 'k:', label='v')
         plt.legend()
         plt.savefig(os.path.join(self.logger[0].log_dir, 'linecut_' + str(self.current_epoch) + '.png'))
         plt.close('all')
@@ -227,8 +238,18 @@ class Stokes(DiffNet2DFEM):
 
 
 def main():
-    u_tensor = np.ones((1,3,24,24))
+    # u_tensor = np.ones((1,3,24,24))
     # u_tensor = np.random.rand(1,3,24,24)
+
+    x = np.linspace(0, 1, 24)
+    y = np.linspace(0, 1, 24)
+
+    xx , yy = np.meshgrid(x, y)
+    v1 = np.sin(math.pi*xx)*np.cos(math.pi*yy)
+    v2 = -np.cos(math.pi*xx)*np.sin(math.pi*yy)
+    p = np.sin(math.pi*xx)*np.sin(math.pi*yy)
+    u_tensor = np.expand_dims(np.array([v1,v2,p]),0)
+    print(u_tensor.shape)
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
     dataset = LDC(domain_size=24)
     basecase = Stokes(network, dataset, domain_size=24, batch_size=1, fem_basis_deg=1)
