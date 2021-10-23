@@ -1,0 +1,4 @@
+[project]
+name = "DiffNets"
+authors = [{name = "Aditya Balu, Biswajit Khara", email = "{baditya,bkhara}@iastate.edu"}]
+dynamic = ["version", "description"]
