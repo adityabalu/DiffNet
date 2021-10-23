@@ -70,14 +70,15 @@ class Decoder(nn.Module):
         layers += [nn.ReflectionPad2d(4), nn.Conv2d(dim * (i + 1)*2, out_channels, 3), nn.Conv2d(out_channels, out_channels, 7)]
 
         self.model_blocks = nn.Sequential(*layers)
-        # if activation == 'sigmoid':
-        #     self.activation = nn.Sigmoid()
-        # elif activation == 'relu':
-        #     self.activation = nn.ReLU()
+        if activation == 'sigmoid':
+            self.activation = nn.Sigmoid()
+        elif activation == 'relu':
+            self.activation = nn.ReLU()
 
     def forward(self, x):
         # print(x.shape)
         x = self.model_blocks(x)
+        #x = self.activation(x)
         return x
 
 
@@ -86,7 +87,7 @@ class AE(nn.Module):
     def __init__(self, in_channels, out_channels, dims=64, n_downsample=4):
         super(AE, self).__init__()
         self.encoder = Encoder(in_channels, dim=dims, n_downsample=n_downsample, encoder_type='regular')
-        self.decoder = Decoder(out_channels, dim=dims, n_upsample=n_downsample, activation='sigmoid')
+        self.decoder = Decoder(out_channels, dim=dims, n_upsample=n_downsample, activation='relu')
 
     def forward(self, x):
         code = self.encoder(x)
