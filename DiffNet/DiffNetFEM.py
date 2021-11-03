@@ -182,6 +182,68 @@ class DiffNet2DFEM(DiffNetFEM):
                 self.d2N_y_gp.append(nn.Parameter(d2N_y_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
                 self.d2N_xy_gp.append(nn.Parameter(d2N_xy_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
 
+    def calc_l2_err(self, u_sol):
+        cn = lambda j,n: [j,j+1,j+n,(j+1)+n]
+        N = lambda x,y: (1./4.)*np.array([(1-x)*(1-y), (1+x)*(1-y), (1-x)*(1+y), (1+x)*(1+y)])
+        transform = lambda a,b,x: ((a+b)/2. + (b-a)/2.*x)
+
+        ngp = 4
+        gpx = np.array([-0.577350269189626, 0.577350269189626, -0.577350269189626, 0.577350269189626])
+        gpy = np.array([-0.577350269189626, -0.577350269189626, 0.577350269189626, 0.577350269189626])
+        gpw = np.ones(4)
+
+        nnodex = self.domain_size
+        nnodey = self.domain_size
+        nelmx = self.domain_size - 1
+        nelmy = self.domain_size - 1
+        hx = (1. / nelmx)
+        hy = (1. / nelmy)
+        J = (hx/2.)*(hy/2.)
+        
+        x = np.linspace(0,1,self.domain_size)
+        y = np.linspace(0,1,self.domain_size)
+        # u_sol = self.u_curr.numpy()
+
+        usolnorm = 0.
+        uexnorm = 0.
+        l2_err = 0.
+        for j in range(nelmy):
+            for i in range(nelmx):
+                local_u = (u_sol[j:j+2,i:i+2].reshape(4,1)).squeeze()
+                # print("local_u = ", local_u)
+                for igp in range(ngp):
+                    basis = N(gpx[igp], gpy[igp])
+                    # print("basis = ", basis)
+                    xp = transform(x[i],x[i+1],gpx[igp])
+                    yp = transform(y[j],y[j+1],gpy[igp])
+
+                    u1 = np.dot(local_u, basis)
+                    u2 = self.exact_solution(xp,yp)
+
+                    # print("(xp,yp,uex,usol) = ", xp,yp,u2,u1)
+                    # print("u1 = ", u1)
+                    # print("u2 = ", u2)
+                    # print("gpw(igp) = ", gpw[igp])
+                    # print("J = ", J)
+                    l2_err += (u1 - u2)**2 * J
+                    usolnorm += u1**2*J
+                    uexnorm += u2**2*J
+
+        l2_err = np.sqrt(l2_err)
+        usolnorm = np.sqrt(usolnorm)
+        uexnorm = np.sqrt(uexnorm)
+
+        # assumes that self.u_exact has been assigned as a torch tensor in the child class
+        u_ex = self.u_exact.squeeze().detach().cpu().numpy()
+
+        print("J = ", J)
+        print("usol.shape =", u_sol.shape)
+        print("uex.shape =", u_ex.shape)
+        print("||u_sol||, ||uex|| = ", usolnorm, uexnorm)
+        print("||e||_{{L2}} = ", l2_err)
+        # by taking vector norm
+        print("||e|| (vector-norm) = ", np.linalg.norm(u_ex - u_sol, 'fro')/nnodex)
+
 
 
 class DiffNet3DFEM(DiffNetFEM):
