@@ -3,6 +3,7 @@ import sys
 import json
 import torch
 import numpy as np
+import argparse
 
 import matplotlib
 # matplotlib.use("pgf")
@@ -104,8 +105,11 @@ def e1_query():
 
 
 if __name__ == '__main__':
-    flag = 'q'
-    if flag == 't':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--runtype', '-r', help='Runtype: Train (t) or Query (q)', type=str, choices=['t', 'q'], required=True)
+    args = parser.parse_args()
+
+    if args.runtype == 't':
         e1_train()
-    elif flag == 'q':
+    elif args.runtype == 'q':
         e1_query()
