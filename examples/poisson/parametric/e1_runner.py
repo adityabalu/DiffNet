@@ -53,7 +53,8 @@ def query_plot_contours_and_save(dirpath,nu,f,u, saveid=None):
     plt.close('all')
 
 def e1_train():
-    dirname = '../ImageDataset'
+    # dirname = '../ImageDataset'
+    dirname = '../AirfoilImageSet'
     dataset = ImageIMBack(dirname, domain_size=256)
     network = GoodNetwork(in_channels=2, out_channels=1, in_dim=64, out_dim=64)
     basecase = Poisson(network, dataset, batch_size=16, domain_size=256)
