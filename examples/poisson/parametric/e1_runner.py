@@ -78,8 +78,9 @@ def e1_train():
 
 def e1_query():
     print("Running query.")
-    dirname = './test_img_data'
-    case_dir = './complex_immersed_background/version_27'
+    # dirname = './test_img_data'
+    dirname = './af-test'
+    case_dir = './complex_immersed_background/version_29'
     query_out_path = os.path.join(case_dir, 'query-test_img_data')
     if not os.path.exists(query_out_path):
         os.makedirs(query_out_path)
