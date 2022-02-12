@@ -156,6 +156,7 @@ class DiffNet2DFEM(DiffNetFEM):
         self.d2N_x_gp = nn.ParameterList()
         self.d2N_y_gp = nn.ParameterList() 
         self.d2N_xy_gp = nn.ParameterList()
+        self.Nvalues = torch.ones((self.nbf_total,self.ngp_total,self.nelem,self.nelem))
         for jgp in range(self.ngp_1d):
             for igp in range(self.ngp_1d):
                 N_gp = torch.zeros((self.nbf_1d, self.nbf_1d))
@@ -169,18 +170,43 @@ class DiffNet2DFEM(DiffNetFEM):
                 self.gpw[IGP] = self.gpw_1d[igp] * self.gpw_1d[jgp]
                 for jbf in range(self.nbf_1d):
                     for ibf in range(self.nbf_1d):
-                        N_gp[ibf,jbf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf]
-                        dN_x_gp[ibf,jbf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * (2 / self.h)
-                        dN_y_gp[ibf,jbf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * (2 / self.h)
-                        d2N_x_gp[ibf,jbf] = self.bf_1d_der2(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * (2 / self.h)**2
-                        d2N_y_gp[ibf,jbf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der2(self.gpx_1d[jgp])[jbf] * (2 / self.h)**2
-                        d2N_xy_gp[ibf,jbf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * (2 / self.h)**2
+                        IBF = self.nbf_1d * jbf + ibf
+                        N_gp[jbf,ibf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf]
+                        dN_x_gp[jbf,ibf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * (2 / self.h)
+                        dN_y_gp[jbf,ibf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * (2 / self.h)
+                        d2N_x_gp[jbf,ibf] = self.bf_1d_der2(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * (2 / self.h)**2
+                        d2N_y_gp[jbf,ibf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der2(self.gpx_1d[jgp])[jbf] * (2 / self.h)**2
+                        d2N_xy_gp[jbf,ibf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * (2 / self.h)**2
+                        self.Nvalues[IBF,IGP,:,:] = torch.ones((self.nelem,self.nelem))*self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf]
                 self.N_gp.append(nn.Parameter(N_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
                 self.dN_x_gp.append(nn.Parameter(dN_x_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
                 self.dN_y_gp.append(nn.Parameter(dN_y_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
                 self.d2N_x_gp.append(nn.Parameter(d2N_x_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
                 self.d2N_y_gp.append(nn.Parameter(d2N_y_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
                 self.d2N_xy_gp.append(nn.Parameter(d2N_xy_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
+
+        x = np.linspace(0,1,self.domain_size)
+        y = np.linspace(0,1,self.domain_size)
+        xx, yy = np.meshgrid(x,y)
+        self.xx = torch.FloatTensor(xx)
+        self.yy = torch.FloatTensor(yy)
+        self.xgp = self.gauss_pt_evaluation(self.xx.unsqueeze(0).unsqueeze(0))
+        self.ygp = self.gauss_pt_evaluation(self.yy.unsqueeze(0).unsqueeze(0))
+        self.xiigp = torch.ones_like(self.xgp)
+        self.etagp = torch.ones_like(self.ygp)
+        for jgp in range(self.ngp_1d):
+            for igp in range(self.ngp_1d):
+                IGP = self.ngp_1d * jgp + igp # tensor product id or the linear id of the gauss point
+                self.xiigp[0,IGP,:,:] = torch.ones_like(self.xiigp[0,IGP,:,:])*self.gpx_1d[igp]
+                self.etagp[0,IGP,:,:] = torch.ones_like(self.etagp[0,IGP,:,:])*self.gpx_1d[jgp]
+
+        # print("xgp = ", self.xgp)
+        # print("ygp = ", self.ygp)
+        # print("xiigp = ", self.xiigp)
+        # print("etagp = ", self.etagp)
+        # # print("self.bf_1d(self.xiigp.squeeze()) = ", self.bf_1d(self.xiigp.squeeze()))
+        # print("Nvalues = \n", self.Nvalues)
+        # exit()
 
     def calc_l2_err(self, u_sol):
         cn = lambda j,n: [j,j+1,j+n,(j+1)+n]

@@ -13,6 +13,7 @@ matplotlib.rcParams.update({
 })
 from matplotlib import pyplot as plt
 
+from torch import nn
 import pytorch_lightning as pl
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -23,18 +24,87 @@ from DiffNet.networks.wgan import GoodNetwork
 from DiffNet.DiffNetFEM import DiffNet2DFEM
 from DiffNet.datasets.single_instances.rectangles import RectangleManufactured
 
+def stiffness_vs_values_conv(tensor, N, nsd=2, stride=1):
+    if nsd == 2:
+        conv_gp = nn.functional.conv2d
+    elif nsd == 3:
+        conv_gp = nn.functional.conv3d
+
+    result_list = []
+    for i in range(len(N)):
+        result_list.append(conv_gp(tensor, N[i], stride=stride))
+    return torch.cat(result_list, 1)
 
 class Poisson(DiffNet2DFEM):
     """docstring for Poisson"""
     def __init__(self, network, dataset, **kwargs):
         super(Poisson, self).__init__(network, dataset, **kwargs)
-        x = np.linspace(0,1,self.domain_size)
-        y = np.linspace(0,1,self.domain_size)
-        xx, yy = np.meshgrid(x,y)
-        self.u_exact = torch.tensor(self.exact_solution(xx,yy))
+        self.u_exact = self.exact_solution(self.xx.numpy(),self.yy.numpy())
+
+        self.Kmatrices = nn.ParameterList()
+        Kmx = np.array([[4.,-1.,-1.,-2.],[-1.,4.,-2.,-1],[-1.,-2.,4.,-1.],[-2.,-1.,-1.,4.]])/6.
+        Kmx = torch.FloatTensor(Kmx)
+        for j in range(4):
+            k = Kmx[j,:].reshape((2,2))
+            print("k = ", k*6)
+            self.Kmatrices.append(nn.Parameter(k.unsqueeze(0).unsqueeze(1), requires_grad=False))
+        # print("self.Kmatrices[0] = ", self.Kmatrices[0])
+        print("self.Kmatrices[0] = ", self.Kmatrices[0].shape)
+        # print("self.N_gp[0] = ", self.N_gp[0].shape)
 
     def exact_solution(self, x,y):
         return np.sin(math.pi*x)*np.sin(math.pi*y)
+        # return torch.sin(math.pi*x)*torch.sin(math.pi*y)
+
+    def forcing(self, x, y):
+        sin = torch.sin        
+        return 2. * math.pi**2 * sin(math.pi * x) * sin(math.pi * y)
+
+    def loss_resmin(self, u, inputs_tensor, forcing_tensor):
+
+        f = forcing_tensor # renaming variable
+        # print("f.shape = ", f)
+        ff = self.forcing(self.xgp, self.ygp)
+        # print("ff.shape = ", ff.shape)
+        transformation_jacobian = (0.5*self.h)**2
+        # JxW = (self.gpw*transformation_jacobian).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
+        JxW = (self.gpw*transformation_jacobian).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
+        Nf = self.Nvalues*ff.squeeze(0)*JxW
+        Nf = torch.sum(Nf, 1).type_as(u) # sum across all gauss points
+        # print("Nf.shape = ", Nf.shape)
+        
+        # extract diffusivity and boundary conditions here
+        nu = inputs_tensor[:,0:1,:,:]
+        bc1 = inputs_tensor[:,1:2,:,:]
+        bc2 = inputs_tensor[:,2:3,:,:]
+
+        # u = torch.ones_like(u)
+        # apply boundary conditions
+        u = torch.where(bc1>0.5,1.0+u*0.0,u)
+        u = torch.where(bc2>0.5,u*0.0,u)
+
+        # utest0 = torch.FloatTensor(torch.sin(math.pi*self.xx)*torch.sin(math.pi*self.yy))
+        # np.savetxt('debugging/utest0.txt', utest0.squeeze().reshape((-1,1)).numpy())
+        # utest = utest0.unsqueeze(0).unsqueeze(0).type_as(next(self.network.parameters()))
+        # R_split = stiffness_vs_values_conv(utest, self.Kmatrices)
+        # R = torch.zeros_like(utest)
+        
+        R_split = stiffness_vs_values_conv(u, self.Kmatrices)
+        R = torch.zeros_like(u)
+        
+        R[:,0, 0:-1, 0:-1] += R_split[:,0, :, :]-Nf[0,:,:]
+        R[:,0, 0:-1, 1:  ] += R_split[:,1, :, :]-Nf[1,:,:]
+        R[:,0, 1:  , 0:-1] += R_split[:,2, :, :]-Nf[2,:,:]
+        R[:,0, 1:  , 1:  ] += R_split[:,3, :, :]-Nf[3,:,:]
+        
+        # R[:,0, 0:-1, 0:-1] += -Nf[0,:,:]
+        # R[:,0, 0:-1, 1:  ] += -Nf[1,:,:]
+        # R[:,0, 1:  , 0:-1] += -Nf[2,:,:]
+        # R[:,0, 1:  , 1:  ] += -Nf[3,:,:]
+        # np.savetxt('debugging/R.txt', R.detach().cpu().squeeze().reshape((-1,1)).numpy(),fmt='%.10f')
+        
+        loss = torch.norm(R,'fro')**2
+        return loss
 
     def loss(self, u, inputs_tensor, forcing_tensor):
 
@@ -93,7 +163,8 @@ class Poisson(DiffNet2DFEM):
     def training_step(self, batch, batch_idx):
     # def training_step(self, batch, batch_idx):
         u, inputs_tensor, forcing_tensor = self.forward(batch)
-        loss_val = self.loss(u, inputs_tensor, forcing_tensor).mean()
+        # loss_val = self.loss(u, inputs_tensor, forcing_tensor).mean()
+        loss_val = self.loss_resmin(u, inputs_tensor, forcing_tensor).mean()
         # self.log('PDE_loss', loss_val.item())
         # self.log('loss', loss_val.item())
         return {"loss": loss_val}
@@ -136,12 +207,13 @@ class Poisson(DiffNet2DFEM):
         u = u.squeeze().detach().cpu()
         self.u_curr = u
 
-        u_exact = self.u_exact.squeeze().detach().cpu()
+        u_exact = self.u_exact.squeeze()
         diff = u - u_exact
-        print(np.linalg.norm(diff.flatten())/self.domain_size)
+        # print(np.linalg.norm(diff.flatten())/self.domain_size)
         im0 = axs[0].imshow(f,cmap='jet')
         fig.colorbar(im0, ax=axs[0], ticks=[0.0, 4.0, 8.0, 12.0, 16.0, 20.0])
-        im1 = axs[1].imshow(u,cmap='jet', vmin=0.0, vmax=1.0)
+        # im1 = axs[1].imshow(u,cmap='jet', vmin=0.0, vmax=1.0)
+        im1 = axs[1].imshow(u,cmap='jet')
         fig.colorbar(im1, ax=axs[1])
         im2 = axs[2].imshow(u_exact,cmap='jet', vmin=0.0, vmax=1.0)
         fig.colorbar(im2, ax=axs[2])
@@ -203,7 +275,7 @@ class Poisson(DiffNet2DFEM):
         usolnorm = np.sqrt(usolnorm)
         uexnorm = np.sqrt(uexnorm)
 
-        u_ex = self.u_exact.squeeze().detach().cpu().numpy()
+        u_ex = self.u_exact.squeeze()
 
 
         print("usol.shape =", u_sol.shape)
@@ -227,7 +299,7 @@ def main():
     # ------------------------
     # 1 INIT TRAINER
     # ------------------------
-    logger = pl.loggers.TensorBoardLogger('.', name="manufactured")
+    logger = pl.loggers.TensorBoardLogger('.', name="manufactured-resmin")
     csv_logger = pl.loggers.CSVLogger(logger.save_dir, name=logger.name, version=logger.version)
 
     early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss',
@@ -238,7 +310,7 @@ def main():
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=2, deterministic=True, profiler="simple")
+        max_epochs=20, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training
