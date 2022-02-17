@@ -42,69 +42,27 @@ class Poisson(DiffNet2DFEM):
         self.u_exact = self.exact_solution(self.xx.numpy(),self.yy.numpy())
 
         self.Kmatrices = nn.ParameterList()
-        Kmx = np.array([[4.,-1.,-1.,-2.],[-1.,4.,-2.,-1],[-1.,-2.,4.,-1.],[-2.,-1.,-1.,4.]])/6.
-        Kmx = torch.FloatTensor(Kmx)
+        self.Mmatrices = nn.ParameterList()
+        Kmx = np.array([[4.,-1.,-1.,-2.],[-1.,4.,-2.,-1.],[-1.,-2.,4.,-1.],[-2.,-1.,-1.,4.]])/6.; Kmx = torch.FloatTensor(Kmx)
+        Mmx = np.array([[4.,2.,2.,1.],[2.,4.,1.,2.],[2.,1.,4.,2.],[1.,2.,2.,4.]])*(self.h**2/4.)/9.; Mmx = torch.FloatTensor(Mmx)
+        self.Mmx = Mmx*9.*(4./self.h**2)
         for j in range(4):
             k = Kmx[j,:].reshape((2,2))
             print("k = ", k*6)
             self.Kmatrices.append(nn.Parameter(k.unsqueeze(0).unsqueeze(1), requires_grad=False))
         # print("self.Kmatrices[0] = ", self.Kmatrices[0])
-        print("self.Kmatrices[0] = ", self.Kmatrices[0].shape)
+        print("self.Kmatrices[0].shape = ", self.Kmatrices[0].shape)
+        for j in range(4):
+            m = Mmx[j,:].reshape((2,2))
+            print("m = ", m*9.*(4./self.h**2))
+            self.Mmatrices.append(nn.Parameter(m.unsqueeze(0).unsqueeze(1), requires_grad=False))
+        print("self.Mmatrices[0].shape = ", self.Mmatrices[0].shape)
         # print("self.N_gp[0] = ", self.N_gp[0].shape)
 
     def exact_solution(self, x,y):
         return np.sin(math.pi*x)*np.sin(math.pi*y)
+        # return np.sin(2.*math.pi*x)*np.sin(2.*math.pi*y)
         # return torch.sin(math.pi*x)*torch.sin(math.pi*y)
-
-    def forcing(self, x, y):
-        sin = torch.sin        
-        return 2. * math.pi**2 * sin(math.pi * x) * sin(math.pi * y)
-
-    def loss_resmin(self, u, inputs_tensor, forcing_tensor):
-
-        f = forcing_tensor # renaming variable
-        # print("f.shape = ", f)
-        ff = self.forcing(self.xgp, self.ygp)
-        # print("ff.shape = ", ff.shape)
-        transformation_jacobian = (0.5*self.h)**2
-        # JxW = (self.gpw*transformation_jacobian).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
-        JxW = (self.gpw*transformation_jacobian).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
-        Nf = self.Nvalues*ff.squeeze(0)*JxW
-        Nf = torch.sum(Nf, 1).type_as(u) # sum across all gauss points
-        # print("Nf.shape = ", Nf.shape)
-        
-        # extract diffusivity and boundary conditions here
-        nu = inputs_tensor[:,0:1,:,:]
-        bc1 = inputs_tensor[:,1:2,:,:]
-        bc2 = inputs_tensor[:,2:3,:,:]
-
-        # u = torch.ones_like(u)
-        # apply boundary conditions
-        u = torch.where(bc1>0.5,1.0+u*0.0,u)
-        u = torch.where(bc2>0.5,u*0.0,u)
-
-        # utest0 = torch.FloatTensor(torch.sin(math.pi*self.xx)*torch.sin(math.pi*self.yy))
-        # np.savetxt('debugging/utest0.txt', utest0.squeeze().reshape((-1,1)).numpy())
-        # utest = utest0.unsqueeze(0).unsqueeze(0).type_as(next(self.network.parameters()))
-        # R_split = stiffness_vs_values_conv(utest, self.Kmatrices)
-        # R = torch.zeros_like(utest)
-        
-        R_split = stiffness_vs_values_conv(u, self.Kmatrices)
-        R = torch.zeros_like(u)
-        
-        R[:,0, 0:-1, 0:-1] += R_split[:,0, :, :]-Nf[0,:,:]
-        R[:,0, 0:-1, 1:  ] += R_split[:,1, :, :]-Nf[1,:,:]
-        R[:,0, 1:  , 0:-1] += R_split[:,2, :, :]-Nf[2,:,:]
-        R[:,0, 1:  , 1:  ] += R_split[:,3, :, :]-Nf[3,:,:]
-        
-        # R[:,0, 0:-1, 0:-1] += -Nf[0,:,:]
-        # R[:,0, 0:-1, 1:  ] += -Nf[1,:,:]
-        # R[:,0, 1:  , 0:-1] += -Nf[2,:,:]
-        # R[:,0, 1:  , 1:  ] += -Nf[3,:,:]
-        # np.savetxt('debugging/R.txt', R.detach().cpu().squeeze().reshape((-1,1)).numpy(),fmt='%.10f')
-        
-        loss = torch.norm(R,'fro')**2
-        return loss
 
     def loss(self, u, inputs_tensor, forcing_tensor):
 
@@ -163,8 +121,10 @@ class Poisson(DiffNet2DFEM):
     def training_step(self, batch, batch_idx):
     # def training_step(self, batch, batch_idx):
         u, inputs_tensor, forcing_tensor = self.forward(batch)
-        # loss_val = self.loss(u, inputs_tensor, forcing_tensor).mean()
-        loss_val = self.loss_resmin(u, inputs_tensor, forcing_tensor).mean()
+        loss_val = self.loss(u, inputs_tensor, forcing_tensor).mean()
+        # loss_val = self.loss_resmin(u, inputs_tensor, forcing_tensor).mean()
+        # loss_val = self.loss_resmin_mass(u, inputs_tensor, forcing_tensor).mean()
+        # loss_val = self.loss_matvec(u, inputs_tensor, forcing_tensor).mean()
         # self.log('PDE_loss', loss_val.item())
         # self.log('loss', loss_val.item())
         return {"loss": loss_val}
@@ -210,15 +170,16 @@ class Poisson(DiffNet2DFEM):
         u_exact = self.u_exact.squeeze()
         diff = u - u_exact
         # print(np.linalg.norm(diff.flatten())/self.domain_size)
-        im0 = axs[0].imshow(f,cmap='jet')
-        fig.colorbar(im0, ax=axs[0], ticks=[0.0, 4.0, 8.0, 12.0, 16.0, 20.0])
-        # im1 = axs[1].imshow(u,cmap='jet', vmin=0.0, vmax=1.0)
+        im0 = axs[0].imshow(f,cmap='jet', vmin=0.0, vmax=20.0)
+        # fig.colorbar(im0, ax=axs[0], ticks=[0.0, 4.0, 8.0, 12.0, 16.0, 20.0])
+        fig.colorbar(im0, ax=axs[0])
         im1 = axs[1].imshow(u,cmap='jet')
         fig.colorbar(im1, ax=axs[1])
         im2 = axs[2].imshow(u_exact,cmap='jet', vmin=0.0, vmax=1.0)
         fig.colorbar(im2, ax=axs[2])
         im3 = axs[3].imshow(diff,cmap='jet')
         fig.colorbar(im3, ax=axs[3])
+        ff = self.forcing(self.xgp, self.ygp)
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
@@ -285,21 +246,182 @@ class Poisson(DiffNet2DFEM):
         # by taking vector norm
         print("||e|| (vector-norm) = ", np.linalg.norm(u_ex - u_sol, 'fro')/nnodex)
 
+class PoissonResMinMMS(Poisson):
+    """docstring for PoissonResMinMMS"""
+    def __init__(self, network, dataset, **kwargs):
+        super(PoissonResMinMMS, self).__init__(network, dataset, **kwargs)
+        self.is_Nf_calc_done = False
+
+    def forcing(self, x, y):
+        sin = torch.sin
+        cos = torch.cos
+        # return 2. * math.pi**2 * sin(math.pi * x) * cos(math.pi * y)
+        return 2. * math.pi**2 * sin(math.pi * x) * sin(math.pi * y)
+        # return 8. * math.pi**2 * sin(2.*math.pi * x) * sin(2.*math.pi * y)
+
+    def loss(self, u, inputs_tensor, forcing_tensor):
+        f = forcing_tensor # renaming variable
+        ff = self.forcing(self.xgp, self.ygp)
+        # print("ff.shape = ", ff.shape)
+
+        transformation_jacobian = (0.5*self.h)**2
+        JxW = (self.gpw*transformation_jacobian).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
+
+        Nf = self.Nvalues*ff.squeeze(0)*JxW
+        Nf = torch.sum(Nf, 1).type_as(u) # sum across all gauss points
+
+        # extract diffusivity and boundary conditions here
+        nu = inputs_tensor[:,0:1,:,:]
+        bc1 = inputs_tensor[:,1:2,:,:]
+        bc2 = inputs_tensor[:,2:3,:,:]
+
+        # apply boundary conditions
+        # NOTE: we do add the BC to the residual later, but adding the residual to u is also very important
+        #       because ideally we want to calculate the values of A*u when A is BC adjusted. But since we
+        #       are not altering the convolution kernel "Kmatrices" (i.e., effectively the values of A), thus
+        #       we will end up with bad values in R at the interior points
+        u = torch.where(bc2>0.5,u*0.0,u)
+
+        R_split = stiffness_vs_values_conv(u, self.Kmatrices)
+        R = torch.zeros_like(u)
+
+        R[:,0, 0:-1, 0:-1] += R_split[:,0, :, :]-Nf[0,:,:]
+        R[:,0, 0:-1, 1:  ] += R_split[:,1, :, :]-Nf[1,:,:]
+        R[:,0, 1:  , 0:-1] += R_split[:,2, :, :]-Nf[2,:,:]
+        R[:,0, 1:  , 1:  ] += R_split[:,3, :, :]-Nf[3,:,:]
+
+        # add boundary conditions to R <---- this step is very important
+        R = torch.where(bc2>0.5,R*0.0,R)
+
+        #  DEBUG RELATED STUFF
+        # utest0 = torch.FloatTensor(torch.sin(math.pi*self.xx)*torch.cos(math.pi*self.yy))
+        # print("xx = n", self.xx)
+        # print("yy = n", self.yy)
+        # np.savetxt('debugging/xx.txt', self.xx.squeeze().reshape((-1,1)).numpy())
+        # np.savetxt('debugging/yy.txt', self.yy.squeeze().reshape((-1,1)).numpy())
+        # np.savetxt('debugging/utest0.txt', utest0.squeeze().reshape((-1,1)).numpy())
+        # utest = utest0.unsqueeze(0).unsqueeze(0).type_as(next(self.network.parameters()))
+        # R_split = stiffness_vs_values_conv(utest, self.Kmatrices)
+        # R = torch.zeros_like(utest)
+
+        # R[:,0, 0:-1, 0:-1] += -Nf[0,:,:]
+        # R[:,0, 0:-1, 1:  ] += -Nf[1,:,:]
+        # R[:,0, 1:  , 0:-1] += -Nf[2,:,:]
+        # R[:,0, 1:  , 1:  ] += -Nf[3,:,:]
+        # np.savetxt('debugging/R.txt', R.detach().cpu().squeeze().reshape((-1,1)).numpy(),fmt='%.10f')
+        # exit()
+
+        loss = torch.norm(R,'fro')**2
+        return loss
+
+    def on_epoch_end(self):
+        fig, axs = plt.subplots(1, 5, figsize=(2*5,1.2),
+                            subplot_kw={'aspect': 'auto'}, sharex=True, sharey=True, squeeze=True)
+        for ax in axs:
+            ax.set_xticks([])
+            ax.set_yticks([])
+        self.network.eval()
+        inputs, forcing = self.dataset[0]
+
+        u, inputs_tensor, forcing_tensor = self.forward((inputs.unsqueeze(0).type_as(next(self.network.parameters())), forcing.unsqueeze(0).type_as(next(self.network.parameters()))))
+
+        f = forcing_tensor.squeeze().detach().cpu() # renaming variable
+
+        # extract diffusivity and boundary conditions here
+        nu = inputs_tensor[:,0:1,:,:]
+        bc1 = inputs_tensor[:,1:2,:,:]
+        bc2 = inputs_tensor[:,2:3,:,:]
+
+        # apply boundary conditions
+        u = torch.where(bc1>0.5,1.0+u*0.0,u)
+        u = torch.where(bc2>0.5,u*0.0,u)
+
+
+        k = nu.squeeze().detach().cpu()
+        u = u.squeeze().detach().cpu()
+        self.u_curr = u
+
+        u_exact = self.u_exact.squeeze()
+        diff = u - u_exact
+        # print(np.linalg.norm(diff.flatten())/self.domain_size)
+        im0 = axs[0].imshow(f,cmap='jet', vmin=0.0, vmax=20.0)
+        # fig.colorbar(im0, ax=axs[0], ticks=[0.0, 4.0, 8.0, 12.0, 16.0, 20.0])
+        fig.colorbar(im0, ax=axs[0])
+        im1 = axs[1].imshow(u,cmap='jet')
+        fig.colorbar(im1, ax=axs[1])
+        im2 = axs[2].imshow(u_exact,cmap='jet', vmin=0.0, vmax=1.0)
+        fig.colorbar(im2, ax=axs[2])
+        im3 = axs[3].imshow(diff,cmap='jet')
+        fig.colorbar(im3, ax=axs[3])
+        ff = self.forcing(self.xgp, self.ygp)
+        im4 = axs[4].imshow(ff.squeeze().numpy()[0],cmap='jet')
+        fig.colorbar(im4, ax=axs[4])
+        plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
+        self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
+        plt.close('all')
+
+class TestSimpleResMin(Poisson):
+    """docstring for TestSimpleResMin"""
+    def __init__(self, network, dataset, **kwargs):
+        super(TestSimpleResMin, self).__init__(network, dataset, **kwargs)
+        # Mmx = np.array([[4.,2.,2.,1.],[2.,4.,1.,2.],[2.,1.,4.,2.],[1.,2.,2.,4.]])
+        # utest = torch.tensor([[1,2.],[3,4.]]).unsqueeze(0).unsqueeze(0).type_as(u)
+        # b = torch.tensor([[18.,21.],[24.,27.]]).unsqueeze(0).unsqueeze(0).type_as(u)
+        Mmx = np.random.rand(self.domain_size**2, self.domain_size**2)
+        self.Mmx = torch.FloatTensor(Mmx)
+        u_exact = np.random.rand(self.domain_size**2,1)
+        self.u_exact = torch.FloatTensor(u_exact)
+        self.rhs = torch.matmul(self.Mmx, self.u_exact)
+
+    def loss(self, u, inputs_tensor, forcing_tensor):
+        M = self.Mmx.unsqueeze(0).unsqueeze(0).type_as(u)
+        b = self.rhs.unsqueeze(0).unsqueeze(0).type_as(u)
+        R = torch.matmul(M, u.view(1,1,-1,1))-b.view(1,1,-1,1)
+        return torch.norm(R,2)**2
+
+    def on_epoch_end(self):
+        # self.network.eval()
+        # inputs, forcing = self.dataset[0]
+        # u, inputs_tensor, forcing_tensor = self.forward((inputs.unsqueeze(0).type_as(next(self.network.parameters())), forcing.unsqueeze(0).type_as(next(self.network.parameters()))))
+        # print("u = \n", u)
+        pass
+
+    def calc_l2_err(self):
+        self.network.eval()
+        inputs, forcing = self.dataset[0]
+        u, inputs_tensor, forcing_tensor = self.forward((inputs.unsqueeze(0).type_as(next(self.network.parameters())), forcing.unsqueeze(0).type_as(next(self.network.parameters()))))
+        difference = u.detach().reshape(-1,1).squeeze()-self.u_exact.squeeze()
+        l2_err = torch.norm(difference, 2)
+        # print("u = \n", u.view(-1,1))
+        # print("u_exact = \n", self.u_exact)
+        print("u = \n", difference.view(-1,1))
+        print("||e||_2 = ", l2_err)
+
 
 def main():
     # u_tensor = np.random.randn(1,1,256,256)
 
-    domain_size = 32
+    caseId = 0
+    domain_size = 64
+    max_epochs = 20
+    if caseId == 0:
+        dir_string = "manufactured-resmin"; PoissonObject = PoissonResMinMMS
+    elif caseId == 1:
+        domain_size = 8; max_epochs = 10
+        dir_string = "simple-resmin"; PoissonObject = TestSimpleResMin
+    elif caseId == 2:
+        dir_string = "manufactured-egymin"; PoissonObject = Poisson
 
     u_tensor = np.ones((1,1,domain_size,domain_size))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
     dataset = RectangleManufactured(domain_size=domain_size)
-    basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=0.01)
+    basecase = PoissonObject(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=0.01)
 
     # ------------------------
     # 1 INIT TRAINER
     # ------------------------
-    logger = pl.loggers.TensorBoardLogger('.', name="manufactured-resmin")
+    logger = pl.loggers.TensorBoardLogger('.', name=dir_string)
+    # logger = pl.loggers.TensorBoardLogger('.', name="simple-resmin")
     csv_logger = pl.loggers.CSVLogger(logger.save_dir, name=logger.name, version=logger.version)
 
     early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss',
@@ -310,7 +432,7 @@ def main():
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=20, deterministic=True, profiler="simple")
+        max_epochs=max_epochs, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training
