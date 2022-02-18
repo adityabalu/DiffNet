@@ -83,8 +83,11 @@ class SpaceTimeRectangleManufactured(data.Dataset):
         x = np.linspace(0,1,domain_size)
         y = np.linspace(0,1,domain_size)
         xx, yy = np.meshgrid(x,y)
-        self.u0 = torch.FloatTensor(np.sin(math.pi*xx)*np.exp(-yy))
-        self.forcing = np.sin(math.pi * xx) * np.exp(-yy) * (math.pi**2 - 1.) # np.zeros_like(xx)
+        self.decay_rt = 0.5
+        self.u0 = torch.FloatTensor(np.sin(math.pi*xx)*np.exp(-self.decay_rt*yy))
+        self.diffusivity = self.decay_rt/math.pi**2
+        # self.forcing = np.sin(math.pi * xx) * np.exp(-yy) * (self.diffusivity*math.pi**2 - 1.) # np.zeros_like(xx)
+        self.forcing = np.zeros_like(xx)
 
     def __len__(self):
         'Denotes the total number of samples'

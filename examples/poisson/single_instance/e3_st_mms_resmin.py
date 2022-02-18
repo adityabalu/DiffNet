@@ -41,7 +41,7 @@ class SpaceTimeHeat(DiffNet2DFEM):
     def __init__(self, network, dataset, **kwargs):
         super(SpaceTimeHeat, self).__init__(network, dataset, **kwargs)
 
-        self.diffusivity = 1.
+        self.diffusivity = self.dataset.diffusivity
         self.u_exact = self.exact_solution(self.xx.numpy(),self.yy.numpy())
 
         self.Kmatrices = nn.ParameterList()
@@ -56,7 +56,7 @@ class SpaceTimeHeat(DiffNet2DFEM):
         print("self.Kmatrices[0].shape = ", self.Kmatrices[0].shape)
 
     def exact_solution(self, x,y):
-        return np.sin(math.pi*x)*np.exp(-y)
+        return np.sin(math.pi*x)*np.exp(-self.dataset.decay_rt*y)
         # return np.sin(2.*math.pi*x)*np.sin(2.*math.pi*y)
         # return torch.sin(math.pi*x)*torch.sin(math.pi*y)
 
@@ -66,7 +66,8 @@ class SpaceTimeHeat(DiffNet2DFEM):
         exp = torch.exp
         # return 2. * math.pi**2 * sin(math.pi * x) * cos(math.pi * y)
         # return 2. * math.pi**2 * sin(math.pi * x) * sin(math.pi * y)
-        return sin(math.pi * x) * exp(-y) * (self.diffusivity * math.pi**2 - 1.)
+        # return sin(math.pi * x) * exp(-y) * (self.diffusivity * math.pi**2 - 1.)
+        return torch.zeros_like(x)
 
     def loss(self, u, inputs_tensor, forcing_tensor):
         f = forcing_tensor # renaming variable
@@ -124,7 +125,8 @@ class SpaceTimeHeat(DiffNet2DFEM):
         # np.savetxt('debugging/R.txt', R.detach().cpu().squeeze().reshape((-1,1)).numpy(),fmt='%.10f')
         # exit()
 
-        loss = torch.norm(R,'fro')**2
+        # loss = torch.norm(R,'fro')**2
+        loss = torch.sum(R**2)
         return loss
 
     def forward(self, batch):
@@ -177,14 +179,12 @@ class SpaceTimeHeat(DiffNet2DFEM):
         return opts, []
 
     def on_epoch_end(self):
-        fig, axs = plt.subplots(1, 4, figsize=(2*4,1.2),
-                            subplot_kw={'aspect': 'auto'}, sharex=True, sharey=True, squeeze=True)
-        for ax in axs:
-            ax.set_xticks([])
-            ax.set_yticks([])
         self.network.eval()
         inputs, forcing = self.dataset[0]
+        nu, f, u = self.do_query(inputs, forcing)
+        self.plot_contours(nu, f, u)
 
+    def do_query(self, inputs, forcing):
         u, inputs_tensor, forcing_tensor = self.forward((inputs.unsqueeze(0).type_as(next(self.network.parameters())), forcing.unsqueeze(0).type_as(next(self.network.parameters()))))
 
         f = forcing_tensor.squeeze().detach().cpu() # renaming variable
@@ -195,12 +195,22 @@ class SpaceTimeHeat(DiffNet2DFEM):
         bc2 = inputs_tensor[:,2:3,:,:]
 
         # apply boundary conditions
-        u = torch.where(bc1>0.5,1.0+u*0.0,u)
+        u0 = self.dataset.u0.unsqueeze(0).unsqueeze(0).type_as(u)
+        u = torch.where(bc1>0.5,u*0.0+u0,u)
         u = torch.where(bc2>0.5,u*0.0,u)
 
-
-        k = nu.squeeze().detach().cpu()
+        nu = nu.squeeze().detach().cpu()
         u = u.squeeze().detach().cpu()
+
+        return nu, f, u
+
+    def plot_contours(self,nu,f,u):
+        fig, axs = plt.subplots(1, 4, figsize=(2*4,1.2),
+                            subplot_kw={'aspect': 'auto'}, sharex=True, sharey=True, squeeze=True)
+        for ax in axs:
+            ax.set_xticks([])
+            ax.set_yticks([])
+
         self.u_curr = u
 
         u_exact = self.u_exact.squeeze()
@@ -289,7 +299,7 @@ def main():
     caseId = 0
     domain_size = 64
     dir_string = "spacetime-heat"
-    max_epochs = 25
+    max_epochs = 15
     
     u_tensor = np.ones((1,1,domain_size,domain_size))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
