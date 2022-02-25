@@ -42,20 +42,32 @@ class AdvDiff2d(DiffNet2DFEM):
         super(AdvDiff2d, self).__init__(network, dataset, **kwargs)
 
         self.Pe = 1.0
-        self.advX = np.cos(math.pi/6.)
-        self.advY = np.sin(math.pi/6.)
-        self.advMag = 1.
-        self.diffusivity = 0.5*self.advMag*self.h / self.Pe
+        self.adv = np.array([np.cos(math.pi/6.), np.sin(math.pi/6.)])
+        self.advMag = np.linalg.norm(self.adv,2)
+        self.diffusivity = 1e-4;
         self.gamma = 2.*self.Pe / self.h
         
         self.u_exact = self.exact_solution(self.xx.numpy(),self.yy.numpy())
+        self.tau = 1. / (2. * self.advMag / self.h + 4 * self.diffusivity / self.h**2)
 
         self.Kmatrices = nn.ParameterList()
         Aet = np.array([[-1.0,-0.5,1.0,0.5],[-0.5,-1.0,0.5,1.0],[-1.0,-0.5,1.0,0.5],[-0.5,-1.0,0.5,1.0]])/6.*self.h; 
         AconvX = np.array([[-1.0,1.0,-0.5,0.5],[-1.0,1.0,-0.5,0.5],[-0.5,0.5,-1.0,1.0],[-0.5,0.5,-1.0,1.0]])/6.*self.h; 
         AconvY = np.array([[-1.0,-0.5,1.0,0.5],[-0.5,-1.0,0.5,1.0],[-1.0,-0.5,1.0,0.5],[-0.5,-1.0,0.5,1.0]])/6.*self.h; 
-        Aed = np.array([[2.0,-2.0, 1.0,-1.0],[-2.0, 2.0,-1.0, 1.0], [1.0,-1.0, 2.0,-2.0],[-1.0, 1.0,-2.0, 2.0]])/6.; 
-        Kmx = torch.FloatTensor(self.advX*AconvX + self.advY*AconvY + self.diffusivity*Aed)
+        Aed = np.array([[2.0,-2.0, 1.0,-1.0],[-2.0, 2.0,-1.0, 1.0], [1.0,-1.0, 2.0,-2.0],[-1.0, 1.0,-2.0, 2.0]])/6.;
+        supgXX = np.array([[ 1.00,-1.00, 0.50,-0.50],[-1.00, 1.00,-0.50, 0.50],[ 0.50,-0.50, 1.00,-1.00],[-0.50, 0.50,-1.00, 1.00]])/3.
+        supgXY = np.array([[ 0.75, 0.75,-0.75,-0.75],[-0.75,-0.75, 0.75, 0.75],[ 0.75, 0.75,-0.75,-0.75],[-0.75,-0.75, 0.75, 0.75]])/3.
+        supgYX = np.array([[ 0.75,-0.75, 0.75,-0.75],[ 0.75,-0.75, 0.75,-0.75],[-0.75, 0.75,-0.75, 0.75],[-0.75, 0.75,-0.75, 0.75]])/3.
+        supgYY = np.array([[ 1.00, 0.50,-1.00,-0.50],[ 0.50, 1.00,-0.50,-1.00],[-1.00,-0.50, 1.00, 0.50],[-0.50,-1.00, 0.50, 1.00]])/3.
+        Kmx = torch.FloatTensor(
+                  self.adv[0]*AconvX
+                + self.adv[1]*AconvY
+                + self.diffusivity*Aed
+                + self.tau * self.adv[0]*self.adv[0]*supgXX
+                + self.tau * self.adv[0]*self.adv[1]*supgXY
+                + self.tau * self.adv[1]*self.adv[0]*supgYX
+                + self.tau * self.adv[1]*self.adv[1]*supgYY
+            )
         for j in range(4):
             k = Kmx[j,:].reshape((2,2))
             print("k = ", k*6)

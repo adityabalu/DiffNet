@@ -158,7 +158,7 @@ class AdvDiff2dRectangle(data.Dataset):
         self.xx = xx; self.yy = yy
 
         # self.forcing = np.sin(math.pi * xx) * np.exp(-yy) * (self.diffusivity*math.pi**2 - 1.) # np.zeros_like(xx)
-        self.forcing = np.ones_like(xx)
+        self.forcing = np.zeros_like(xx)
 
     def __len__(self):
         'Denotes the total number of samples'
