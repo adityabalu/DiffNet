@@ -43,11 +43,18 @@ class SpaceTimeHeat(DiffNet2DFEM):
 
         self.diffusivity = self.dataset.diffusivity
         self.u_exact = self.exact_solution(self.xx.numpy(),self.yy.numpy())
+        self.tau = 1. / (2. / self.h)
 
         self.Kmatrices = nn.ParameterList()
         Aet = np.array([[-1.0,-0.5,1.0,0.5],[-0.5,-1.0,0.5,1.0],[-1.0,-0.5,1.0,0.5],[-0.5,-1.0,0.5,1.0]])/6.*self.h; 
         Aed = np.array([[2.0,-2.0, 1.0,-1.0],[-2.0, 2.0,-1.0, 1.0], [1.0,-1.0, 2.0,-2.0],[-1.0, 1.0,-2.0, 2.0]])/6.; 
-        Kmx = torch.FloatTensor(Aet + self.diffusivity*Aed)
+        supgYY = np.array([[ 1.00, 0.50,-1.00,-0.50],[ 0.50, 1.00,-0.50,-1.00],[-1.00,-0.50, 1.00, 0.50],[-0.50,-1.00, 0.50, 1.00]])/3.
+        Kmx = torch.FloatTensor(
+                  Aet
+                + self.diffusivity*Aed
+                + self.tau * supgYY
+            )
+        # Kmx = torch.FloatTensor(Aet + self.diffusivity*Aed)
         for j in range(4):
             k = Kmx[j,:].reshape((2,2))
             print("k = ", k*6)
