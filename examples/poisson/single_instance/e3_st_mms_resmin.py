@@ -45,7 +45,7 @@ class SpaceTimeHeat(DiffNet2DFEM):
         self.u_exact = self.exact_solution(self.xx.numpy(),self.yy.numpy())
         self.tau = 1. / (2. / self.h)
 
-        self.f_rhs = self.forcing(self.xgp, self.ygp)
+        self.f_gp = self.forcing(self.xgp, self.ygp)
 
         self.Kmatrices = nn.ParameterList()
         Aet = np.array([[-1.0,-0.5,1.0,0.5],[-0.5,-1.0,0.5,1.0],[-1.0,-0.5,1.0,0.5],[-0.5,-1.0,0.5,1.0]])/6.*self.h; 
@@ -79,12 +79,12 @@ class SpaceTimeHeat(DiffNet2DFEM):
         # return torch.zeros_like(x)
 
     def loss(self, u, inputs_tensor, forcing_tensor):
-        Nvalues = self.Nvalues.type_as(u)
+        N_values = self.Nvalues.type_as(u)
         dN_x_values = self.dN_x_values.type_as(u)
         dN_y_values = self.dN_y_values.type_as(u)
         gpw = self.gpw.type_as(u)
         u0 = self.dataset.u0.unsqueeze(0).unsqueeze(0).type_as(u)
-        f_rhs = self.f_rhs.type_as(u)
+        f_gp = self.f_gp.type_as(u)
         
         # extract diffusivity and boundary conditions here
         f = forcing_tensor # renaming variable
@@ -109,21 +109,26 @@ class SpaceTimeHeat(DiffNet2DFEM):
 
         # CALCULATION STARTS
         # lhs
-        vuy = Nvalues*u_y_gp*JxW
+        vuy = N_values*u_y_gp*JxW
         vxux = dN_x_values*u_x_gp*JxW
         supgyy = dN_y_values*u_y_gp*JxW
-        R_split = torch.sum(vuy+self.diffusivity*vxux+self.tau*supgyy, 2) # sum across all GP
-        # R_split = stiffness_vs_values_conv(u, self.Kmatrices)
         # rhs
-        Nf = (Nvalues + self.tau*dN_y_values)*f_rhs*JxW
-        Nf = torch.sum(Nf, 2) # sum across all gauss points
+        vf = (N_values + self.tau*dN_y_values)*f_gp*JxW
+
+        # integrated values on lhs & rhs
+        v_lhs = torch.sum(vuy+self.diffusivity*vxux+self.tau*supgyy, 2) # sum across all GP
+        v_rhs = torch.sum(vf, 2) # sum across all gauss points
+
+        # unassembled residual
+        R_split = v_lhs - v_rhs
+        # R_split = stiffness_vs_values_conv(u, self.Kmatrices)
 
         # assembly
         R = torch.zeros_like(u)
-        R[:,0, 0:-1, 0:-1] += R_split[:,0, :, :]-Nf[0,0,:,:]
-        R[:,0, 0:-1, 1:  ] += R_split[:,1, :, :]-Nf[0,1,:,:]
-        R[:,0, 1:  , 0:-1] += R_split[:,2, :, :]-Nf[0,2,:,:]
-        R[:,0, 1:  , 1:  ] += R_split[:,3, :, :]-Nf[0,3,:,:]
+        R[:,0, 0:-1, 0:-1] += R_split[:,0, :, :] #-vf[0,0,:,:]
+        R[:,0, 0:-1, 1:  ] += R_split[:,1, :, :] #-vf[0,1,:,:]
+        R[:,0, 1:  , 0:-1] += R_split[:,2, :, :] #-vf[0,2,:,:]
+        R[:,0, 1:  , 1:  ] += R_split[:,3, :, :] #-vf[0,3,:,:]
         # add boundary conditions to R <---- this step is very important
         R = torch.where(bc1>0.5,R*0.0+u0,R)
         R = torch.where(bc2>0.5,R*0.0,R)
