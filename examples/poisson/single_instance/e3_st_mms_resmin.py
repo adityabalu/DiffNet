@@ -45,6 +45,8 @@ class SpaceTimeHeat(DiffNet2DFEM):
         self.u_exact = self.exact_solution(self.xx.numpy(),self.yy.numpy())
         self.tau = 1. / (2. / self.h)
 
+        self.f_rhs = self.forcing(self.xgp, self.ygp)
+
         self.Kmatrices = nn.ParameterList()
         Aet = np.array([[-1.0,-0.5,1.0,0.5],[-0.5,-1.0,0.5,1.0],[-1.0,-0.5,1.0,0.5],[-0.5,-1.0,0.5,1.0]])/6.*self.h; 
         Aed = np.array([[2.0,-2.0, 1.0,-1.0],[-2.0, 2.0,-1.0, 1.0], [1.0,-1.0, 2.0,-2.0],[-1.0, 1.0,-2.0, 2.0]])/6.; 
@@ -52,7 +54,7 @@ class SpaceTimeHeat(DiffNet2DFEM):
         Kmx = torch.FloatTensor(
                   Aet
                 + self.diffusivity*Aed
-                + self.tau * supgYY
+                # + self.tau * supgYY
             )
         # Kmx = torch.FloatTensor(Aet + self.diffusivity*Aed)
         for j in range(4):
@@ -73,26 +75,26 @@ class SpaceTimeHeat(DiffNet2DFEM):
         exp = torch.exp
         # return 2. * math.pi**2 * sin(math.pi * x) * cos(math.pi * y)
         # return 2. * math.pi**2 * sin(math.pi * x) * sin(math.pi * y)
-        # return sin(math.pi * x) * exp(-y) * (self.diffusivity * math.pi**2 - 1.)
-        return torch.zeros_like(x)
+        return sin(math.pi * x) * exp(-self.dataset.decay_rt*y) * (self.diffusivity * math.pi**2 - self.dataset.decay_rt)
+        # return torch.zeros_like(x)
 
     def loss(self, u, inputs_tensor, forcing_tensor):
-        f = forcing_tensor # renaming variable
-        ff = self.forcing(self.xgp, self.ygp)
+        Nvalues = self.Nvalues.type_as(u)
+        dN_x_values = self.dN_x_values.type_as(u)
+        dN_y_values = self.dN_y_values.type_as(u)
+        gpw = self.gpw.type_as(u)
         u0 = self.dataset.u0.unsqueeze(0).unsqueeze(0).type_as(u)
-        # print("ff.shape = ", ff.shape)
-        # print("u0.shape = ", u0.shape)
+        f_rhs = self.f_rhs.type_as(u)
         
-        transformation_jacobian = (0.5*self.h)**2
-        JxW = (self.gpw*transformation_jacobian).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
-
-        Nf = self.Nvalues*ff.squeeze(0)*JxW
-        Nf = torch.sum(Nf, 1).type_as(u) # sum across all gauss points
-
         # extract diffusivity and boundary conditions here
+        f = forcing_tensor # renaming variable
         nu = inputs_tensor[:,0:1,:,:]
         bc1 = inputs_tensor[:,1:2,:,:]
         bc2 = inputs_tensor[:,2:3,:,:]
+
+        # DERIVE NECESSARY VALUES
+        trnsfrm_jac = (0.5*self.h)**2
+        JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0).unsqueeze(0)
 
         # apply boundary conditions
         # NOTE: we do add the BC to the residual later, but adding the residual to u is also very important
@@ -102,14 +104,26 @@ class SpaceTimeHeat(DiffNet2DFEM):
         u = torch.where(bc1>0.5,u*0.0+u0,u)
         u = torch.where(bc2>0.5,u*0.0,u)
 
-        R_split = stiffness_vs_values_conv(u, self.Kmatrices)
+        u_x_gp = self.gauss_pt_evaluation_der_x(u)
+        u_y_gp = self.gauss_pt_evaluation_der_y(u)
+
+        # CALCULATION STARTS
+        # lhs
+        vuy = Nvalues*u_y_gp*JxW
+        vxux = dN_x_values*u_x_gp*JxW
+        supgyy = dN_y_values*u_y_gp*JxW
+        R_split = torch.sum(vuy+self.diffusivity*vxux+self.tau*supgyy, 2) # sum across all GP
+        # R_split = stiffness_vs_values_conv(u, self.Kmatrices)
+        # rhs
+        Nf = (Nvalues + self.tau*dN_y_values)*f_rhs*JxW
+        Nf = torch.sum(Nf, 2) # sum across all gauss points
+
+        # assembly
         R = torch.zeros_like(u)
-
-        R[:,0, 0:-1, 0:-1] += R_split[:,0, :, :]-Nf[0,:,:]
-        R[:,0, 0:-1, 1:  ] += R_split[:,1, :, :]-Nf[1,:,:]
-        R[:,0, 1:  , 0:-1] += R_split[:,2, :, :]-Nf[2,:,:]
-        R[:,0, 1:  , 1:  ] += R_split[:,3, :, :]-Nf[3,:,:]
-
+        R[:,0, 0:-1, 0:-1] += R_split[:,0, :, :]-Nf[0,0,:,:]
+        R[:,0, 0:-1, 1:  ] += R_split[:,1, :, :]-Nf[0,1,:,:]
+        R[:,0, 1:  , 0:-1] += R_split[:,2, :, :]-Nf[0,2,:,:]
+        R[:,0, 1:  , 1:  ] += R_split[:,3, :, :]-Nf[0,3,:,:]
         # add boundary conditions to R <---- this step is very important
         R = torch.where(bc1>0.5,R*0.0+u0,R)
         R = torch.where(bc2>0.5,R*0.0,R)
@@ -230,7 +244,7 @@ class SpaceTimeHeat(DiffNet2DFEM):
         fig.colorbar(im1, ax=axs[1])
         im2 = axs[2].imshow(u_exact,cmap='jet', vmin=0.0, vmax=1.0)
         fig.colorbar(im2, ax=axs[2])
-        im3 = axs[3].imshow(diff,cmap='jet', vmin=0.0, vmax=0.5)
+        im3 = axs[3].imshow(diff,cmap='jet') #, vmin=0.0, vmax=0.5)
         fig.colorbar(im3, ax=axs[3])
         ff = self.forcing(self.xgp, self.ygp)
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))

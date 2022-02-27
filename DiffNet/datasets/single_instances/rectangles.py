@@ -85,7 +85,7 @@ class SpaceTimeRectangleManufactured(data.Dataset):
         xx, yy = np.meshgrid(x,y)
         self.decay_rt = 0.5
         self.u0 = torch.FloatTensor(np.sin(math.pi*xx)*np.exp(-self.decay_rt*yy))
-        self.diffusivity = self.decay_rt/math.pi**2
+        self.diffusivity = 0.1 # self.decay_rt/math.pi**2
         # self.forcing = np.sin(math.pi * xx) * np.exp(-yy) * (self.diffusivity*math.pi**2 - 1.) # np.zeros_like(xx)
         self.forcing = np.zeros_like(xx)
 

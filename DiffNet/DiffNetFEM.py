@@ -156,7 +156,9 @@ class DiffNet2DFEM(DiffNetFEM):
         self.d2N_x_gp = nn.ParameterList()
         self.d2N_y_gp = nn.ParameterList() 
         self.d2N_xy_gp = nn.ParameterList()
-        self.Nvalues = torch.ones((self.nbf_total,self.ngp_total,self.nelem,self.nelem))
+        self.Nvalues = torch.ones((1,self.nbf_total,self.ngp_total,1,1))
+        self.dN_x_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1))
+        self.dN_y_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1))
         for jgp in range(self.ngp_1d):
             for igp in range(self.ngp_1d):
                 N_gp = torch.zeros((self.nbf_1d, self.nbf_1d))
@@ -177,7 +179,9 @@ class DiffNet2DFEM(DiffNetFEM):
                         d2N_x_gp[jbf,ibf] = self.bf_1d_der2(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * (2 / self.h)**2
                         d2N_y_gp[jbf,ibf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der2(self.gpx_1d[jgp])[jbf] * (2 / self.h)**2
                         d2N_xy_gp[jbf,ibf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * (2 / self.h)**2
-                        self.Nvalues[IBF,IGP,:,:] = torch.ones((self.nelem,self.nelem))*self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf]
+                        self.Nvalues[0,IBF,IGP,:,:] = N_gp[jbf,ibf]
+                        self.dN_x_values[0,IBF,IGP,:,:] = dN_x_gp[jbf,ibf]
+                        self.dN_y_values[0,IBF,IGP,:,:] = dN_y_gp[jbf,ibf]
                 self.N_gp.append(nn.Parameter(N_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
                 self.dN_x_gp.append(nn.Parameter(dN_x_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
                 self.dN_y_gp.append(nn.Parameter(dN_y_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
