@@ -50,17 +50,20 @@ class AdvDiff2d(DiffNet2DFEM):
         self.u_exact = self.exact_solution(self.xx.numpy(),self.yy.numpy())
         self.tau = 1. / (2. * self.advMag / self.h + 4 * self.diffusivity / self.h**2)
 
+        self.f_gp = self.forcing(self.xgp, self.ygp)
+
         self.Kmatrices = nn.ParameterList()
         Aet = np.array([[-1.0,-0.5,1.0,0.5],[-0.5,-1.0,0.5,1.0],[-1.0,-0.5,1.0,0.5],[-0.5,-1.0,0.5,1.0]])/6.*self.h; 
         AconvX = np.array([[-1.0,1.0,-0.5,0.5],[-1.0,1.0,-0.5,0.5],[-0.5,0.5,-1.0,1.0],[-0.5,0.5,-1.0,1.0]])/6.*self.h; 
         AconvY = np.array([[-1.0,-0.5,1.0,0.5],[-0.5,-1.0,0.5,1.0],[-1.0,-0.5,1.0,0.5],[-0.5,-1.0,0.5,1.0]])/6.*self.h; 
-        Aed = np.array([[2.0,-2.0, 1.0,-1.0],[-2.0, 2.0,-1.0, 1.0], [1.0,-1.0, 2.0,-2.0],[-1.0, 1.0,-2.0, 2.0]])/6.;
+        # Aed = np.array([[2.0,-2.0, 1.0,-1.0],[-2.0, 2.0,-1.0, 1.0], [1.0,-1.0, 2.0,-2.0],[-1.0, 1.0,-2.0, 2.0]])/6.;
+        Aed = np.array([[4.,-1.,-1.,-2.],[-1.,4.,-2.,-1],[-1.,-2.,4.,-1.],[-2.,-1.,-1.,4.]])/6.
         supgXX = np.array([[ 1.00,-1.00, 0.50,-0.50],[-1.00, 1.00,-0.50, 0.50],[ 0.50,-0.50, 1.00,-1.00],[-0.50, 0.50,-1.00, 1.00]])/3.
         supgXY = np.array([[ 0.75, 0.75,-0.75,-0.75],[-0.75,-0.75, 0.75, 0.75],[ 0.75, 0.75,-0.75,-0.75],[-0.75,-0.75, 0.75, 0.75]])/3.
         supgYX = np.array([[ 0.75,-0.75, 0.75,-0.75],[ 0.75,-0.75, 0.75,-0.75],[-0.75, 0.75,-0.75, 0.75],[-0.75, 0.75,-0.75, 0.75]])/3.
         supgYY = np.array([[ 1.00, 0.50,-1.00,-0.50],[ 0.50, 1.00,-0.50,-1.00],[-1.00,-0.50, 1.00, 0.50],[-0.50,-1.00, 0.50, 1.00]])/3.
         Kmx = torch.FloatTensor(
-                  self.adv[0]*AconvX
+                self.adv[0]*AconvX
                 + self.adv[1]*AconvY
                 + self.diffusivity*Aed
                 + self.tau * self.adv[0]*self.adv[0]*supgXX
@@ -91,22 +94,21 @@ class AdvDiff2d(DiffNet2DFEM):
         return torch.zeros_like(x)
 
     def loss(self, u, inputs_tensor, forcing_tensor):
-        f = forcing_tensor # renaming variable
-        ff = self.forcing(self.xgp, self.ygp)
-        # u0 = self.dataset.u0.unsqueeze(0).unsqueeze(0).type_as(u)
-        # print("ff.shape = ", ff.shape)
-        # print("u0.shape = ", u0.shape)
-        
-        transformation_jacobian = (0.5*self.h)**2
-        JxW = (self.gpw*transformation_jacobian).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
-
-        Nf = self.Nvalues*ff.squeeze(0)*JxW
-        Nf = torch.sum(Nf, 1).type_as(u) # sum across all gauss points
+        N_values = self.Nvalues.type_as(u)
+        dN_x_values = self.dN_x_values.type_as(u)
+        dN_y_values = self.dN_y_values.type_as(u)
+        gpw = self.gpw.type_as(u)
+        f_gp = self.f_gp.type_as(u)
 
         # extract diffusivity and boundary conditions here
+        f = forcing_tensor # renaming variable
         nu = inputs_tensor[:,0:1,:,:]
         bc1 = inputs_tensor[:,1:2,:,:]
         bc2 = inputs_tensor[:,2:3,:,:]
+
+        # DERIVE NECESSARY VALUES
+        trnsfrm_jac = (0.5*self.h)**2
+        JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
 
         # apply boundary conditions
         # NOTE: we do add the BC to the residual later, but adding the residual to u is also very important
@@ -116,35 +118,49 @@ class AdvDiff2d(DiffNet2DFEM):
         u = torch.where(bc1>0.5,u*0.0+1.,u)
         u = torch.where(bc2>0.5,u*0.0,u)
 
-        R_split = stiffness_vs_values_conv(u, self.Kmatrices)
+        u_x_gp = self.gauss_pt_evaluation_der_x(u)
+        u_y_gp = self.gauss_pt_evaluation_der_y(u)
+
+        # CALCULATION STARTS
+        # lhs
+        vux = N_values*u_x_gp*JxW
+        vuy = N_values*u_y_gp*JxW
+        vxux = dN_x_values*u_x_gp*JxW
+        vxuy = dN_x_values*u_y_gp*JxW
+        vyux = dN_y_values*u_x_gp*JxW
+        vyuy = dN_y_values*u_y_gp*JxW
+        # rhs
+        vf = (N_values + self.tau*(self.adv[0]*dN_x_values+self.adv[1]*dN_y_values))*f_gp*JxW
+
+        # integrated values on lhs & rhs
+        temp = (self.adv[0]*vux + self.adv[1]*vuy
+                + self.diffusivity*(vxux+vyuy)
+                + self.tau*self.adv[0]*self.adv[0]*vxux
+                + self.tau*self.adv[0]*self.adv[1]*vxuy
+                + self.tau*self.adv[1]*self.adv[0]*vyux
+                + self.tau*self.adv[1]*self.adv[1]*vyuy
+            )
+
+        v_lhs = torch.sum(temp, 2) # sum across all GP
+        v_rhs = torch.sum(vf, 2) # sum across all gauss points
+
+        # unassembled residual
+        R_split = v_lhs - v_rhs
+        # matvec = stiffness_vs_values_conv(u, self.Kmatrices)
+        # diff = v_lhs - matvec
+        # print("diffnorm = ", torch.norm(diff, 'fro'))
+
+        # R_split = matvec
+
+        # assembly
         R = torch.zeros_like(u)
-
-        R[:,0, 0:-1, 0:-1] += R_split[:,0, :, :]-Nf[0,:,:]
-        R[:,0, 0:-1, 1:  ] += R_split[:,1, :, :]-Nf[1,:,:]
-        R[:,0, 1:  , 0:-1] += R_split[:,2, :, :]-Nf[2,:,:]
-        R[:,0, 1:  , 1:  ] += R_split[:,3, :, :]-Nf[3,:,:]
-
+        R[:,0, 0:-1, 0:-1] += R_split[:,0, :, :]
+        R[:,0, 0:-1, 1:  ] += R_split[:,1, :, :]
+        R[:,0, 1:  , 0:-1] += R_split[:,2, :, :]
+        R[:,0, 1:  , 1:  ] += R_split[:,3, :, :]
         # add boundary conditions to R <---- this step is very important
         R = torch.where(bc1>0.5,R*0.0+1.,R)
         R = torch.where(bc2>0.5,R*0.0,R)
-
-        #  DEBUG RELATED STUFF
-        # utest0 = torch.FloatTensor(torch.sin(math.pi*self.xx)*torch.cos(math.pi*self.yy))
-        # print("xx = n", self.xx)
-        # print("yy = n", self.yy)
-        # np.savetxt('debugging/xx.txt', self.xx.squeeze().reshape((-1,1)).numpy())
-        # np.savetxt('debugging/yy.txt', self.yy.squeeze().reshape((-1,1)).numpy())
-        # np.savetxt('debugging/utest0.txt', utest0.squeeze().reshape((-1,1)).numpy())
-        # utest = utest0.unsqueeze(0).unsqueeze(0).type_as(next(self.network.parameters()))
-        # R_split = stiffness_vs_values_conv(utest, self.Kmatrices)
-        # R = torch.zeros_like(utest)
-
-        # R[:,0, 0:-1, 0:-1] += -Nf[0,:,:]
-        # R[:,0, 0:-1, 1:  ] += -Nf[1,:,:]
-        # R[:,0, 1:  , 0:-1] += -Nf[2,:,:]
-        # R[:,0, 1:  , 1:  ] += -Nf[3,:,:]
-        # np.savetxt('debugging/R.txt', R.detach().cpu().squeeze().reshape((-1,1)).numpy(),fmt='%.10f')
-        # exit()
 
         # loss = torch.norm(R,'fro')**2
         loss = torch.sum(R**2)
