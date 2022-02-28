@@ -94,7 +94,7 @@ class SpaceTimeHeat(DiffNet2DFEM):
 
         # DERIVE NECESSARY VALUES
         trnsfrm_jac = (0.5*self.h)**2
-        JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0).unsqueeze(0)
+        JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
 
         # apply boundary conditions
         # NOTE: we do add the BC to the residual later, but adding the residual to u is also very important
