@@ -146,11 +146,46 @@ class AdvDiff2dRectangle(data.Dataset):
         # bc2 will be sink, u will be set to 0 at these locations
         self.bc2 = np.zeros((domain_size, domain_size))
         adv_cut_left = 0.2
-        adv_cut_idx = int(0.2*domain_size)
+        adv_cut_idx = int(adv_cut_left*domain_size)
         self.bc1[adv_cut_idx:,0] = 1
         self.bc2[:adv_cut_idx,0] = 1
         self.bc2[0,:] = 1
         # self.bc2[:,-1] = 1
+        self.n_samples = 100
+        x = np.linspace(0,1,domain_size)
+        y = np.linspace(0,1,domain_size)
+        xx, yy = np.meshgrid(x,y)
+        self.xx = xx; self.yy = yy
+
+        # self.forcing = np.sin(math.pi * xx) * np.exp(-yy) * (self.diffusivity*math.pi**2 - 1.) # np.zeros_like(xx)
+        self.forcing = np.zeros_like(xx)
+
+    def __len__(self):
+        'Denotes the total number of samples'
+        return self.n_samples
+
+    def __getitem__(self, index):
+        'Generates one sample of data'
+        inputs = np.array([self.domain, self.bc1, self.bc2])
+        forcing = self.forcing
+        return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
+
+class AllenCahnIceMeltRectangle(data.Dataset):
+    'PyTorch dataset for sampling coefficients'
+    def __init__(self, domain_size=64):
+        """
+        Initialization
+        """
+        self.domain = np.ones((domain_size, domain_size))
+        # bc1 will be source, u will be set to 1 at these locations
+        self.bc1 = np.zeros((domain_size, domain_size))
+        # bc2 will be sink, u will be set to 0 at these locations
+        self.bc2 = np.zeros((domain_size, domain_size))
+        ice_water_border_init = 0.5 # at t=0, ice @ [0,0.5) and water @[0.5,1]
+        ice_water_border_idx = int(ice_water_border_init*domain_size)
+        self.bc1[0, ice_water_border_idx:] = 1
+        self.bc2[0, 0:ice_water_border_idx] = 1
+
         self.n_samples = 100
         x = np.linspace(0,1,domain_size)
         y = np.linspace(0,1,domain_size)
