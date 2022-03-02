@@ -102,7 +102,7 @@ class DiffNetFEM(PDE):
             gpx_1d = np.array([0.])
             gpw_1d = np.array([2.])
         elif ngp_1d == 2:
-            gpx_1d = np.array([-0.577, 0.577])
+            gpx_1d = np.array([-0.5773502691896258, 0.5773502691896258])
             gpw_1d = gpw = np.array([1., 1.])
         elif ngp_1d == 3:
             gpx_1d = np.array([-0.774596669, 0., +0.774596669])

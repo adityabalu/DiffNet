@@ -176,15 +176,21 @@ class AllenCahnIceMeltRectangle(data.Dataset):
         """
         Initialization
         """
+        self.ac_A = 16.
+        self.ac_Cn = 0.1
+        self.ac_D = 1.
+        self.ac_k = 2.
+
         self.domain = np.ones((domain_size, domain_size))
         # bc1 will be source, u will be set to 1 at these locations
         self.bc1 = np.zeros((domain_size, domain_size))
         # bc2 will be sink, u will be set to 0 at these locations
         self.bc2 = np.zeros((domain_size, domain_size))
-        ice_water_border_init = 0.5 # at t=0, ice @ [0,0.5) and water @[0.5,1]
-        ice_water_border_idx = int(ice_water_border_init*domain_size)
-        self.bc1[0, ice_water_border_idx:] = 1
-        self.bc2[0, 0:ice_water_border_idx] = 1
+        # ice_water_border_init = 0.5 # at t=0, ice @ [0,0.5) and water @[0.5,1]
+        # ice_water_border_idx = int(ice_water_border_init*domain_size)
+        # self.bc1[0, ice_water_border_idx:] = 1
+        # self.bc2[0, 0:ice_water_border_idx] = 1
+        self.bc1[0,:] = 1
 
         self.n_samples = 100
         x = np.linspace(0,1,domain_size)
@@ -192,7 +198,13 @@ class AllenCahnIceMeltRectangle(data.Dataset):
         xx, yy = np.meshgrid(x,y)
         self.xx = xx; self.yy = yy
 
-        # self.forcing = np.sin(math.pi * xx) * np.exp(-yy) * (self.diffusivity*math.pi**2 - 1.) # np.zeros_like(xx)
+        interface_thickness = self.ac_Cn*np.sqrt(2./self.ac_A)
+        u_t0 = 0.5+0.5*(np.tanh((x-0.5)/interface_thickness))
+        u_t0 = u_t0[np.newaxis, :]
+        self.u0 = torch.zeros((domain_size, domain_size))
+        self.u0[0,:] = torch.FloatTensor(u_t0)
+        self.initial_guess = np.tile(u_t0, (domain_size, 1))
+
         self.forcing = np.zeros_like(xx)
 
     def __len__(self):

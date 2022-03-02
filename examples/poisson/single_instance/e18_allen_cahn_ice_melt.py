@@ -41,10 +41,10 @@ class AllenCahnIceMelt(DiffNet2DFEM):
     def __init__(self, network, dataset, **kwargs):
         super(AllenCahnIceMelt, self).__init__(network, dataset, **kwargs)
 
-        self.ac_A = 16.
-        self.ac_Cn = 0.1
-        self.ac_D = 1.
-        self.ac_k = 2.
+        self.ac_A  = self.dataset.ac_A
+        self.ac_Cn = self.dataset.ac_Cn
+        self.ac_D  = self.dataset.ac_D
+        self.ac_k  = self.dataset.ac_k
 
         self.Pe = 1.0
         self.adv = np.array([np.cos(math.pi/6.), np.sin(math.pi/6.)])
@@ -80,6 +80,8 @@ class AllenCahnIceMelt(DiffNet2DFEM):
         dN_x_values = self.dN_x_values.type_as(u)
         dN_y_values = self.dN_y_values.type_as(u)
         gpw = self.gpw.type_as(u)
+
+        u0 = self.dataset.u0.unsqueeze(0).unsqueeze(0).type_as(u)
         f_gp = self.f_gp.type_as(u)
 
         # extract diffusivity and boundary conditions here
@@ -97,7 +99,7 @@ class AllenCahnIceMelt(DiffNet2DFEM):
         #       because ideally we want to calculate the values of A*u when A is BC adjusted. But since we
         #       are not altering the convolution kernel "Kmatrices" (i.e., effectively the values of A), thus
         #       we will end up with bad values in R at the interior points
-        u = torch.where(bc1>0.5,u*0.0+1.,u)
+        u = torch.where(bc1>0.5,u*0.0+u0,u)
         u = torch.where(bc2>0.5,u*0.0,u)
 
         u_gp = self.gauss_pt_evaluation(u)
@@ -139,7 +141,7 @@ class AllenCahnIceMelt(DiffNet2DFEM):
         R[:,0, 1:  , 0:-1] += R_split[:,2, :, :]
         R[:,0, 1:  , 1:  ] += R_split[:,3, :, :]
         # add boundary conditions to R <---- this step is very important
-        R = torch.where(bc1>0.5,R*0.0+1.,R)
+        R = torch.where(bc1>0.5,R*0.0+u0,R)
         R = torch.where(bc2>0.5,R*0.0,R)
 
         # loss = torch.norm(R,'fro')**2
@@ -217,8 +219,8 @@ class AllenCahnIceMelt(DiffNet2DFEM):
         bc2 = inputs_tensor[:,2:3,:,:]
 
         # apply boundary conditions
-        # u0 = self.dataset.u0.unsqueeze(0).unsqueeze(0).type_as(u)
-        u = torch.where(bc1>0.5,u*0.0+1.,u)
+        u0 = self.dataset.u0.unsqueeze(0).unsqueeze(0).type_as(u)
+        u = torch.where(bc1>0.5,u*0.0+u0,u)
         u = torch.where(bc2>0.5,u*0.0,u)
 
         nu = nu.squeeze().detach().cpu()
@@ -321,15 +323,12 @@ def main():
     caseId = 0
     domain_size = 64
     dir_string = "allen-cahn-icemelt-2d"
-    max_epochs = 300
+    max_epochs = 200
     
-    ice_water_border_init = 0.5 # at t=0, ice @ [0,0.5) and water @[0.5,1]
-    ice_water_border_idx = int(ice_water_border_init*domain_size)
-
-    u_tensor = np.ones((1,1,domain_size,domain_size))    
-    u_tensor[:,:,:,0:ice_water_border_idx] = 0.
-    network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
     dataset = AllenCahnIceMeltRectangle(domain_size=domain_size)
+    # u_tensor = np.ones((1,1,domain_size,domain_size))
+    u_tensor = dataset.initial_guess
+    network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
     basecase = AllenCahnIceMelt(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=0.01)
 
     # ------------------------
