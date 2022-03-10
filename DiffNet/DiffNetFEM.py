@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from torch import nn
 from .base import PDE
+from .cuboid_mesh import CuboidMesh
 
 def gauss_pt_eval(tensor, N, nsd=2, stride=1):
     if nsd == 2:
@@ -292,6 +293,10 @@ class DiffNet3DFEM(DiffNetFEM):
         self.d2N_xy_gp = nn.ParameterList()
         self.d2N_yz_gp = nn.ParameterList()
         self.d2N_zx_gp = nn.ParameterList()
+        self.Nvalues = torch.ones((1,self.nbf_total,self.ngp_total,1,1,1))
+        self.dN_x_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1,1))
+        self.dN_y_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1,1))
+        self.dN_z_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1,1))
         for kgp in range(self.ngp_1d):
             for jgp in range(self.ngp_1d):
                 for igp in range(self.ngp_1d):
@@ -307,21 +312,26 @@ class DiffNet3DFEM(DiffNetFEM):
                     d2N_zx_gp = torch.zeros((self.nbf_1d, self.nbf_1d, self.nbf_1d))
 
                     IGP = kgp * self.ngp_1d**2 + jgp * self.ngp_1d + igp # tensor product id or the linear id of the gauss point
-                    self.gpw[IGP] = self.gpw_1d[igp] * self.gpw_1d[jgp]
+                    self.gpw[IGP] = self.gpw_1d[igp] * self.gpw_1d[jgp] * self.gpw_1d[kgp]
 
                     for kbf in range(self.nbf_1d):
                         for jbf in range(self.nbf_1d):
                             for ibf in range(self.nbf_1d):
-                                N_gp[ibf,jbf,kbf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf]
-                                dN_x_gp[ibf,jbf,kbf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf] * (2 / self.h)
-                                dN_y_gp[ibf,jbf,kbf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf] * (2 / self.h)
-                                dN_z_gp[ibf,jbf,kbf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d_der(self.gpx_1d[kgp])[kbf] * (2 / self.h)
+                                IBF = kbf * self.nbf_1d**2 + jbf * self.nbf_1d + ibf
+                                N_gp[kbf,jbf,ibf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf]
+                                dN_x_gp[kbf,jbf,ibf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf] * (2 / self.h)
+                                dN_y_gp[kbf,jbf,ibf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf] * (2 / self.h)
+                                dN_z_gp[kbf,jbf,ibf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d_der(self.gpx_1d[kgp])[kbf] * (2 / self.h)
                                 d2N_x_gp[ibf,jbf,kbf] = self.bf_1d_der2(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf] * (2 / self.h)**2
                                 d2N_y_gp[ibf,jbf,kbf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der2(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf] * (2 / self.h)**2
                                 d2N_z_gp[ibf,jbf,kbf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d_der2(self.gpx_1d[kgp])[kbf] * (2 / self.h)**2
                                 d2N_xy_gp[ibf,jbf,kbf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf] * (2 / self.h)**2
                                 d2N_yz_gp[ibf,jbf,kbf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * self.bf_1d_der(self.gpx_1d[kgp])[kbf] * (2 / self.h)**2
                                 d2N_zx_gp[ibf,jbf,kbf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d_der(self.gpx_1d[kgp])[kbf] * (2 / self.h)**2
+                                self.Nvalues[0,IBF,IGP,:,:,:] = N_gp[kbf,jbf,ibf]
+                                self.dN_x_values[0,IBF,IGP,:,:,:] = dN_x_gp[kbf,jbf,ibf]
+                                self.dN_y_values[0,IBF,IGP,:,:,:] = dN_y_gp[kbf,jbf,ibf]
+                                self.dN_z_values[0,IBF,IGP,:,:,:] = dN_z_gp[kbf,jbf,ibf]
 
                     self.N_gp.append(nn.Parameter(N_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
                     self.dN_x_gp.append(nn.Parameter(dN_x_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
@@ -333,3 +343,108 @@ class DiffNet3DFEM(DiffNetFEM):
                     self.d2N_xy_gp.append(nn.Parameter(d2N_xy_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
                     self.d2N_yz_gp.append(nn.Parameter(d2N_yz_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
                     self.d2N_zx_gp.append(nn.Parameter(d2N_zx_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
+
+        x = np.linspace(0,1,self.domain_size)
+        y = np.linspace(0,1,self.domain_size)
+        z = np.linspace(0,1,self.domain_size)
+        # xx, yy, zz = np.meshgrid(x,y,z)
+        xx, yy, zz = CuboidMesh.meshgrid_3d(x,y,z)
+        self.xx = torch.FloatTensor(xx)
+        self.yy = torch.FloatTensor(yy)
+        self.zz = torch.FloatTensor(zz)
+        self.xgp = self.gauss_pt_evaluation(self.xx.unsqueeze(0).unsqueeze(0))
+        self.ygp = self.gauss_pt_evaluation(self.yy.unsqueeze(0).unsqueeze(0))
+        self.zgp = self.gauss_pt_evaluation(self.zz.unsqueeze(0).unsqueeze(0))
+
+        # print("xgp = ", self.xgp)
+        # print("ygp = ", self.ygp)
+        # print("xiigp = ", self.xiigp)
+        # print("etagp = ", self.etagp)
+        # # print("self.bf_1d(self.xiigp.squeeze()) = ", self.bf_1d(self.xiigp.squeeze()))
+        # print("Nvalues = \n", self.Nvalues)
+        # for i in range(8):
+        #     print("N_gp[{}] = \n".format(i), self.N_gp[i])
+        # for i in range(8):
+        #     print("dN_x_gp[{}] = \n".format(i), self.dN_x_gp[i])
+        # for i in range(8):
+        #     print("dN_y_gp[{}] = \n".format(i), self.dN_y_gp[i])
+        # for i in range(8):
+        #     print("dN_z_gp[{}] = \n".format(i), self.dN_z_gp[i])
+
+    def calc_l2_err(self, u_sol):
+        N = lambda x,y,z: (1./8.)*np.array([
+            (1-x)*(1-y)*(1-z),
+            (1+x)*(1-y)*(1-z),
+            (1-x)*(1+y)*(1-z),
+            (1+x)*(1+y)*(1-z),
+            (1-x)*(1-y)*(1+z),
+            (1+x)*(1-y)*(1+z),
+            (1-x)*(1+y)*(1+z),
+            (1+x)*(1+y)*(1+z)
+            ])
+        transform = lambda a,b,x: ((a+b)/2. + (b-a)/2.*x)
+
+        ngp = 8
+        gpx_1d = self.gpx_1d
+        gpw_1d = self.gpw_1d
+        gpx = np.tile(gpx_1d,4)
+        gpy = np.tile(np.repeat(gpx_1d,2),2)
+        gpz = np.repeat(gpx_1d,4)
+        gpw = np.ones(8)
+
+        nnodex = self.domain_size
+        nnodey = self.domain_size
+        nelmx = self.domain_size - 1
+        nelmy = self.domain_size - 1
+        nelmz = self.domain_size - 1
+        hx = (1. / nelmx)
+        hy = (1. / nelmy)
+        hz = (1. / nelmz)
+        J = (hx/2.)*(hy/2.)*(hz/2.)
+
+        x = np.linspace(0,1,self.domain_size)
+        y = np.linspace(0,1,self.domain_size)
+        z = np.linspace(0,1,self.domain_size)
+        # u_sol = self.u_curr.numpy()
+
+        usolnorm = 0.
+        uexnorm = 0.
+        l2_err = 0.
+        for k in range(nelmz):
+            for j in range(nelmy):
+                for i in range(nelmx):
+                    local_u = (u_sol[k:k+2,j:j+2,i:i+2].reshape(8,1)).squeeze()
+                    # print("local_u = ", local_u)
+                    for igp in range(ngp):
+                        basis = N(gpx[igp], gpy[igp], gpz[igp])
+                        # print("basis = ", basis)
+                        xp = transform(x[i],x[i+1],gpx[igp])
+                        yp = transform(y[j],y[j+1],gpy[igp])
+                        zp = transform(z[k],z[k+1],gpz[igp])
+
+                        u1 = np.dot(local_u, basis)
+                        u2 = self.exact_solution(xp,yp,zp)
+
+                        # print("(xp,yp,uex,usol) = ", xp,yp,u2,u1)
+                        # print("u1 = ", u1)
+                        # print("u2 = ", u2)
+                        # print("gpw(igp) = ", gpw[igp])
+                        # print("J = ", J)
+                        l2_err += (u1 - u2)**2 * J
+                        usolnorm += u1**2*J
+                        uexnorm += u2**2*J
+
+        l2_err = np.sqrt(l2_err)
+        usolnorm = np.sqrt(usolnorm)
+        uexnorm = np.sqrt(uexnorm)
+
+        # assumes that self.u_exact has been assigned as a torch tensor in the child class
+        u_ex = self.u_exact.squeeze().detach().cpu().numpy()
+
+        print("J = ", J)
+        print("usol.shape =", u_sol.shape)
+        print("uex.shape =", u_ex.shape)
+        print("||u_sol||, ||uex|| = ", usolnorm, uexnorm)
+        print("||e||_{{L2}} = ", l2_err)
+        # by taking vector norm
+        print("||e|| (vector-norm) = ", np.linalg.norm(u_ex.reshape(-1,1) - u_sol.reshape(-1,1), 'fro')/(1.*nnodex)**1.5)
