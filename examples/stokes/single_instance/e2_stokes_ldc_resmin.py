@@ -12,7 +12,7 @@ import matplotlib
 # matplotlib.use("pgf")
 matplotlib.rcParams.update({
     # 'font.family': 'serif',
-    'font.size':12,
+    'font.size':8,
 })
 from matplotlib import pyplot as plt
 
@@ -24,7 +24,7 @@ seed_everything(42)
 import DiffNet
 from DiffNet.DiffNetFEM import DiffNet2DFEM
 from torch.utils import data
-from e1_stokes_resmin_base import Stokes2D
+from e1_stokes_base_resmin import Stokes2D
 
 class Stokes_LDC_Dataset(data.Dataset):
     'PyTorch dataset for Stokes_MMS_Dataset'
@@ -82,8 +82,38 @@ class Stokes_LDC(Stokes2D):
         self.v_bc = torch.FloatTensor(v_bc)
         self.p_bc = torch.FloatTensor(p_bc)
 
+    def loss(self, pred, inputs_tensor, forcing_tensor):
+        R1, R2, R3 = self.calc_residuals(pred, inputs_tensor, forcing_tensor)
+        # loss = torch.norm(R1, 'fro') + torch.norm(R2, 'fro') + torch.norm(R3, 'fro')
+        return torch.norm(R1, 'fro'), torch.norm(R2, 'fro'), torch.norm(R3, 'fro')
+
+    def training_step(self, batch, batch_idx, optimizer_idx):
+        u, inputs_tensor, forcing_tensor = self.forward(batch)
+        loss_vals = self.loss(u, inputs_tensor, forcing_tensor)
+        # self.log('PDE_loss', sum(loss_vals).item())
+        self.log('loss_u', loss_vals[0].item())
+        self.log('loss_v', loss_vals[1].item())
+        self.log('loss_p', loss_vals[2].item())
+        # return loss_vals[optimizer_idx]
+        return {"loss": loss_vals[optimizer_idx]}
+
+    def training_step_end(self, training_step_outputs):
+        loss = training_step_outputs["loss"]
+        # unorm = training_step_outputs["unorm"]
+        # self.log('loss', loss.item())
+        # self.log('unorm', unorm.item())
+        return training_step_outputs
+
+    def configure_optimizers(self):
+        # print("self.network[0].parameters() = ", self.network[0].parameters())
+        lr = self.learning_rate
+        # opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
+        opts = [torch.optim.Adam(self.network, lr=lr), torch.optim.Adam(self.network, lr=lr), torch.optim.Adam(self.network, lr=lr)]
+        # opts = [torch.optim.Adam(self.network, lr=lr), torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
+        return opts, []
+
     def plot_contours(self, u, v, p, u_x, v_y):
-        fig, axs = plt.subplots(3, 3, figsize=(2*3,1.2*3),
+        fig, axs = plt.subplots(3, 3, figsize=(4*3,2.4*3),
                             subplot_kw={'aspect': 'auto'}, squeeze=True)
 
         for ax_row in axs:
@@ -163,6 +193,7 @@ def main():
     u_tensor = np.expand_dims(np.array([v1,v2,p]),0)
     print(u_tensor.shape)
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
+    print("network = ", network)
     basecase = Stokes_LDC(network, dataset, domain_size=domain_size, batch_size=1, fem_basis_deg=1, learning_rate=0.001)
 
     # Initialize trainer

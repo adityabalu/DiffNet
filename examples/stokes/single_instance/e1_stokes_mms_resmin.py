@@ -24,7 +24,7 @@ seed_everything(42)
 import DiffNet
 from DiffNet.DiffNetFEM import DiffNet2DFEM
 from torch.utils import data
-from e1_stokes_resmin_base import Stokes2D
+from e1_stokes_base_resmin import Stokes2D
 
 class Stokes_MMS_Dataset(data.Dataset):
     'PyTorch dataset for Stokes_MMS_Dataset'
@@ -79,7 +79,7 @@ class Stokes_MMS(Stokes2D):
         self.p_bc = self.p_exact
 
     def exact_solution(self, x, y):
-        print("exact_solution -- child class called")
+        print("exact_solution -- MMS class called")
         pi = math.pi
         sin = np.sin
         cos = np.cos        
@@ -89,7 +89,7 @@ class Stokes_MMS(Stokes2D):
         return u_exact, v_exact, p_exact
 
     def forcing(self, x, y):
-        print("forcing -- child class called")
+        print("forcing -- MMS class called")
         pi = math.pi
         sin = np.sin
         cos = np.cos
