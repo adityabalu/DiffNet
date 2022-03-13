@@ -62,7 +62,7 @@ class Stokes2D(DiffNet2DFEM):
         Aglobal[:,0, 1:  , 1:  ] += Aloc_all[:,3, :, :]
         return Aglobal
 
-    def loss(self, pred, inputs_tensor, forcing_tensor):
+    def calc_residuals(self, pred, inputs_tensor, forcing_tensor):
         # print("pred type = ", pred.type(), ", pred.shape = ", pred.shape)
         # exit()
         N_values = self.Nvalues.type_as(pred)
@@ -152,6 +152,10 @@ class Stokes2D(DiffNet2DFEM):
         R2 = torch.where(bc2>=0.5, v_bc, R2)
         R3 = torch.where(bc3>=0.5, p_bc, R3)
 
+        return R1, R2, R3
+
+    def loss(self, pred, inputs_tensor, forcing_tensor):
+        R1, R2, R3 = self.calc_residuals(pred, inputs_tensor, forcing_tensor)
         loss = torch.norm(R1, 'fro') + torch.norm(R2, 'fro') + torch.norm(R3, 'fro')
         return loss
 
