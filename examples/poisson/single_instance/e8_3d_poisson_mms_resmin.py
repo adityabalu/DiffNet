@@ -37,7 +37,7 @@ class Poisson(DiffNet3DFEM):
         # y_1d = np.linspace(0,1,5)
         # z_1d = np.linspace(0,1,4)        
         # xx, yy, zz = self.meshgrid_3d(x_1d, y_1d, z_1d)
-        self.u_exact = torch.tensor(self.exact_solution(self.dataset.xx,self.dataset.yy,self.dataset.zz))
+        self.u_exact = self.exact_solution(self.dataset.xx,self.dataset.yy,self.dataset.zz)
         self.f_gp = self.forcing(self.xgp,self.ygp,self.zgp)
         self.diffusivity = 1.
 
@@ -198,6 +198,8 @@ class Poisson(DiffNet3DFEM):
         self.network.eval()
         inputs, forcing = self.dataset[0]
         nu, f, u = self.do_query(inputs, forcing)
+        nu = nu.squeeze().detach().cpu()
+        u = u.squeeze().detach().cpu()
         self.plot_contours(nu, f, u)
 
     def do_query(self, inputs, forcing):
@@ -216,10 +218,6 @@ class Poisson(DiffNet3DFEM):
         u = torch.where(bc1>0.5,1.0+u*0.0,u)
         u = torch.where(bc2>0.5,u*0.0,u)
 
-
-        nu = nu.squeeze().detach().cpu()
-        u = u.squeeze().detach().cpu()
-
         return nu, f, u
 
     def plot_contours(self,nu,f,u):
@@ -230,7 +228,7 @@ class Poisson(DiffNet3DFEM):
                 ax.set_xticks([])
                 ax.set_yticks([])
         
-        u_exact = self.u_exact.squeeze().detach().cpu()
+        u_exact = self.u_exact
         diff = u - u_exact
 
         sliceidx = int(self.domain_size / 2)
@@ -301,7 +299,7 @@ class Poisson(DiffNet3DFEM):
 def main():
     domain_size = 24
     dir_string = "poisson-mms-resmin-3d"
-    max_epochs = 8
+    max_epochs = 10
     u_tensor = np.ones((1,1,domain_size,domain_size,domain_size))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
     dataset = CuboidManufactured(domain_size=domain_size)
@@ -338,10 +336,8 @@ def main():
     basecase.dataset[0]
     inputs, forcing = basecase.dataset[0]
     nu, f, u = basecase.do_query(inputs, forcing) 
-    u = u.numpy()
     print("Calculating L2 error:")
-    basecase.calc_l2_err(u)
-
+    basecase.calc_l2_err(u.detach())
 
 if __name__ == '__main__':
     main()

@@ -208,6 +208,10 @@ class SpaceTimeHeat(DiffNet2DFEM):
         self.network.eval()
         inputs, forcing = self.dataset[0]
         nu, f, u = self.do_query(inputs, forcing)
+
+        nu = nu.squeeze().detach().cpu()
+        u = u.squeeze().detach().cpu()
+
         self.plot_contours(nu, f, u)
 
     def do_query(self, inputs, forcing):
@@ -224,9 +228,6 @@ class SpaceTimeHeat(DiffNet2DFEM):
         u0 = self.dataset.u0.unsqueeze(0).unsqueeze(0).type_as(u)
         u = torch.where(bc1>0.5,u*0.0+u0,u)
         u = torch.where(bc2>0.5,u*0.0,u)
-
-        nu = nu.squeeze().detach().cpu()
-        u = u.squeeze().detach().cpu()
 
         return nu, f, u
 
@@ -255,69 +256,6 @@ class SpaceTimeHeat(DiffNet2DFEM):
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
-
-    def calc_l2_err(self):
-        cn = lambda j,n: [j,j+1,j+n,(j+1)+n]
-        N = lambda x,y: (1./4.)*np.array([(1-x)*(1-y), (1+x)*(1-y), (1-x)*(1+y), (1+x)*(1+y)])
-        transform = lambda a,b,x: ((a+b)/2. + (b-a)/2.*x)
-
-        ngp = 4
-        gpx = np.array([-0.577350269189626, 0.577350269189626, -0.577350269189626, 0.577350269189626])
-        gpy = np.array([-0.577350269189626, -0.577350269189626, 0.577350269189626, 0.577350269189626])
-        gpw = np.ones(4)
-
-        nnodex = self.domain_size
-        nnodey = self.domain_size
-        nelmx = self.domain_size - 1
-        nelmy = self.domain_size - 1
-        hx = (1. / nelmx)
-        hy = (1. / nelmy)
-        J = (hx/2.)*(hy/2.)
-        print("J = ", J)
-
-        x = np.linspace(0,1,self.domain_size)
-        y = np.linspace(0,1,self.domain_size)
-        u_sol = self.u_curr.numpy()
-
-        usolnorm = 0.
-        uexnorm = 0.
-        l2_err = 0.
-        for j in range(nelmy):
-            for i in range(nelmx):
-                local_u = (u_sol[j:j+2,i:i+2].reshape(4,1)).squeeze()
-                # print("local_u = ", local_u)
-                for igp in range(ngp):
-                    basis = N(gpx[igp], gpy[igp])
-                    # print("basis = ", basis)
-                    xp = transform(x[i],x[i+1],gpx[igp])
-                    yp = transform(y[j],y[j+1],gpy[igp])
-
-                    u1 = np.dot(local_u, basis)
-                    u2 = self.exact_solution(xp,yp)
-
-                    # print("(xp,yp,uex,usol) = ", xp,yp,u2,u1)
-                    # print("u1 = ", u1)
-                    # print("u2 = ", u2)
-                    # print("gpw(igp) = ", gpw[igp])
-                    # print("J = ", J)
-                    l2_err += (u1 - u2)**2 * J
-                    usolnorm += u1**2*J
-                    uexnorm += u2**2*J
-
-        l2_err = np.sqrt(l2_err)
-        usolnorm = np.sqrt(usolnorm)
-        uexnorm = np.sqrt(uexnorm)
-
-        u_ex = self.u_exact.squeeze()
-
-
-        print("usol.shape =", u_sol.shape)
-        print("uex.shape =", u_ex.shape)
-        print("||u_sol||, ||uex|| = ", usolnorm, uexnorm)
-        print("||e||_{{L2}} = ", l2_err)
-        # by taking vector norm
-        print("||e|| (vector-norm) = ", np.linalg.norm(u_ex - u_sol, 'fro')/nnodex)
-
 
 def main():
     # u_tensor = np.random.randn(1,1,256,256)
@@ -360,8 +298,13 @@ def main():
     # ------------------------
     torch.save(basecase.network, os.path.join(logger.log_dir, 'network.pt'))
 
-    basecase.calc_l2_err()
-
+    # L2 error calculation
+    basecase.dataset[0]
+    inputs, forcing = basecase.dataset[0]
+    nu, f, u = basecase.do_query(inputs, forcing)
+    print("Calculating L2 error:")
+    basecase.calc_l2_err(u.detach())
+    basecase.calc_l2_err_old(u.detach().squeeze().numpy())
 
 if __name__ == '__main__':
     main()

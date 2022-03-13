@@ -213,7 +213,7 @@ class DiffNet2DFEM(DiffNetFEM):
         # print("Nvalues = \n", self.Nvalues)
         # exit()
 
-    def calc_l2_err(self, u_sol):
+    def calc_l2_err_old(self, u_sol):
         cn = lambda j,n: [j,j+1,j+n,(j+1)+n]
         N = lambda x,y: (1./4.)*np.array([(1-x)*(1-y), (1+x)*(1-y), (1-x)*(1+y), (1+x)*(1+y)])
         transform = lambda a,b,x: ((a+b)/2. + (b-a)/2.*x)
@@ -265,7 +265,7 @@ class DiffNet2DFEM(DiffNetFEM):
         uexnorm = np.sqrt(uexnorm)
 
         # assumes that self.u_exact has been assigned as a torch tensor in the child class
-        u_ex = self.u_exact.squeeze().detach().cpu().numpy()
+        u_ex = self.u_exact #.squeeze().detach().cpu().numpy()
 
         print("J = ", J)
         print("usol.shape =", u_sol.shape)
@@ -275,6 +275,38 @@ class DiffNet2DFEM(DiffNetFEM):
         # by taking vector norm
         print("||e|| (vector-norm) = ", np.linalg.norm(u_ex - u_sol, 'fro')/nnodex)
 
+    def calc_l2_err(self, u_sol):
+        # assumes that self.u_exact has been assigned as a torch tensor in the child class
+        u_ex = torch.FloatTensor(self.u_exact)
+
+        u_gp = self.gauss_pt_evaluation(u_sol)
+        u_ex_gp = self.exact_solution(self.xgp, self.ygp).type_as(u_sol)
+        e_gp = u_gp - u_ex_gp
+
+        gpw = self.gpw.type_as(u_sol)
+        # DERIVE NECESSARY VALUES
+        trnsfrm_jac = (0.5*self.h)**2
+        JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
+
+        e2 = e_gp**2*JxW
+        e2_elmwise = torch.sum(e2, 1)
+        eL2 = torch.sqrt(torch.sum(e2_elmwise))
+
+        u2 = u_gp**2*JxW
+        u2_elmwise = torch.sum(u2, 1)
+        uL2 = torch.sqrt(torch.sum(u2_elmwise))
+
+        u_ex2 = u_ex_gp**2*JxW
+        u_ex2_elmwise = torch.sum(u_ex2, 1)
+        u_exL2 = torch.sqrt(torch.sum(u_ex2_elmwise))
+
+        print("J = ", trnsfrm_jac)
+        print("usol.shape =", u_sol.shape)
+        print("uex.shape =", u_ex.shape)
+        print("||u_sol||, ||uex|| = ", uL2, u_exL2)
+        print("||e||_{{L2}} = ", eL2)
+        # by taking vector norm
+        print("||e|| (vector-norm) = ", torch.norm(u_ex - u_sol, 'fro')/self.domain_size)
 
 
 class DiffNet3DFEM(DiffNetFEM):
@@ -371,7 +403,7 @@ class DiffNet3DFEM(DiffNetFEM):
         # for i in range(8):
         #     print("dN_z_gp[{}] = \n".format(i), self.dN_z_gp[i])
 
-    def calc_l2_err(self, u_sol):
+    def calc_l2_err_old(self, u_sol):
         N = lambda x,y,z: (1./8.)*np.array([
             (1-x)*(1-y)*(1-z),
             (1+x)*(1-y)*(1-z),
@@ -448,3 +480,36 @@ class DiffNet3DFEM(DiffNetFEM):
         print("||e||_{{L2}} = ", l2_err)
         # by taking vector norm
         print("||e|| (vector-norm) = ", np.linalg.norm(u_ex.reshape(-1,1) - u_sol.reshape(-1,1), 'fro')/(1.*nnodex)**1.5)
+
+    def calc_l2_err(self, u_sol):
+        # assumes that self.u_exact has been assigned as a torch tensor in the child class
+        u_ex = torch.FloatTensor(self.u_exact)
+
+        u_gp = self.gauss_pt_evaluation(u_sol)
+        u_ex_gp = self.exact_solution(self.xgp, self.ygp, self.zgp).type_as(u_sol)
+        e_gp = u_gp - u_ex_gp
+
+        gpw = self.gpw.type_as(u_sol)
+        # DERIVE NECESSARY VALUES
+        trnsfrm_jac = (0.5*self.h)**3
+        JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
+
+        e2 = e_gp**2*JxW
+        e2_elmwise = torch.sum(e2, 1)
+        eL2 = torch.sqrt(torch.sum(e2_elmwise))
+
+        u2 = u_gp**2*JxW
+        u2_elmwise = torch.sum(u2, 1)
+        uL2 = torch.sqrt(torch.sum(u2_elmwise))
+
+        u_ex2 = u_ex_gp**2*JxW
+        u_ex2_elmwise = torch.sum(u_ex2, 1)
+        u_exL2 = torch.sqrt(torch.sum(u_ex2_elmwise))
+
+        print("J = ", trnsfrm_jac)
+        print("usol.shape =", u_sol.shape)
+        print("uex.shape =", u_ex.shape)
+        print("||u_sol||, ||uex|| = ", uL2, u_exL2)
+        print("||e||_{{L2}} = ", eL2)
+        # by taking vector norm
+        print("||e|| (vector-norm) = ", torch.norm(u_ex - u_sol, 'fro')/(1.*self.domain_size)**1.5)
