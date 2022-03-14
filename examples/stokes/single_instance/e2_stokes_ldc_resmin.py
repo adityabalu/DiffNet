@@ -26,6 +26,25 @@ from DiffNet.DiffNetFEM import DiffNet2DFEM
 from torch.utils import data
 # from e1_stokes_base_resmin import Stokes2D
 
+from pytorch_lightning.callbacks.base import Callback
+
+class OptimSwitchLBFGS(Callback):
+    def __init__(self, epochs=50):
+        self.switch_epoch = epochs
+        self.print_declaration = False
+
+    def on_epoch_start(self, trainer, pl_module):
+        if trainer.current_epoch == self.switch_epoch:
+            if not self.print_declaration:
+                print("======================Switching to LBFGS after {} epochs ======================".format(self.switch_epoch))
+                self.print_declaration = True
+            opts = [torch.optim.LBFGS(pl_module.net_u.parameters(), lr=pl_module.learning_rate, max_iter=5),
+                        torch.optim.LBFGS(pl_module.net_v.parameters(), lr=pl_module.learning_rate, max_iter=5),
+                        # torch.optim.LBFGS(pl_module.net_p.parameters(), lr=pl_module.learning_rate, max_iter=5),
+                        torch.optim.Adam(pl_module.net_p.parameters(), lr=pl_module.learning_rate)
+                        ]
+            trainer.optimizers = opts
+
 class Stokes_LDC_Dataset(data.Dataset):
     'PyTorch dataset for Stokes_MMS_Dataset'
     def __init__(self, domain_size=64, Re=1):
@@ -103,6 +122,7 @@ class Stokes_LDC(DiffNet2DFEM):
         self.midline_Y = numerical[:,0]
         self.midline_U = numerical[:,1]
         self.midline_V = numerical[:,2]
+        self.topline_P = numerical[:,3]
 
     def exact_solution(self, x, y):
         print("exact_solution -- LDC class called")
@@ -241,15 +261,15 @@ class Stokes_LDC(DiffNet2DFEM):
         self.net_v.eval()
         self.net_p.eval()
         inputs, forcing = self.dataset[0]
-        u, v, p, u_x, v_y = self.do_query(inputs, forcing)
+        u, v, p, u_x_gp, v_y_gp = self.do_query(inputs, forcing)
 
         u = u.squeeze().detach().cpu()
         v = v.squeeze().detach().cpu()
         p = p.squeeze().detach().cpu()
-        u_x = u_x.squeeze().detach().cpu()
-        v_y = v_y.squeeze().detach().cpu()
+        u_x_gp = u_x_gp.squeeze().detach().cpu()
+        v_y_gp = v_y_gp.squeeze().detach().cpu()
 
-        self.plot_contours(u, v, p, u_x, v_y)
+        self.plot_contours(u, v, p, u_x_gp, v_y_gp)
 
     def do_query(self, inputs, forcing):
         u, v, p, inputs_tensor, forcing_tensor = self.forward((inputs.unsqueeze(0).type_as(next(self.net_u.parameters())), forcing.unsqueeze(0).type_as(next(self.net_u.parameters()))))
@@ -272,12 +292,12 @@ class Stokes_LDC(DiffNet2DFEM):
         v = torch.where(bc2>=0.5, v_bc, v)
         p = torch.where(bc3>=0.5, p_bc, p)
 
-        u_x = self.gauss_pt_evaluation_der_x(u)[:,0,:,:]
-        v_y = self.gauss_pt_evaluation_der_y(v)[:,0,:,:]
+        u_x_gp = self.gauss_pt_evaluation_der_x(u)
+        v_y_gp = self.gauss_pt_evaluation_der_y(v)
 
-        return u, v, p, u_x, v_y
+        return u, v, p, u_x_gp, v_y_gp
 
-    def plot_contours(self, u, v, p, u_x, v_y):
+    def plot_contours(self, u, v, p, u_x_gp, v_y_gp):
         fig, axs = plt.subplots(3, 3, figsize=(4*3,2.4*3),
                             subplot_kw={'aspect': 'auto'}, squeeze=True)
 
@@ -286,31 +306,37 @@ class Stokes_LDC(DiffNet2DFEM):
                 axs[i,j].set_xticks([])
                 axs[i,j].set_yticks([])
         
-        div = u_x + v_y
+        div_gp = u_x_gp + v_y_gp
+        div_elmwise = torch.sum(div_gp, 0)
+        div_total = torch.sum(div_elmwise)
 
-        im0 = axs[0,0].imshow(u,cmap='jet', origin='lower')
-        fig.colorbar(im0, ax=axs[0,0])
-        im1 = axs[0,1].imshow(v,cmap='jet',origin='lower')
-        fig.colorbar(im1, ax=axs[0,1])  
-        im2 = axs[0,2].imshow(p,cmap='jet',origin='lower')
-        fig.colorbar(im2, ax=axs[0,2])
+        interp_method = 'bilinear'
+        im0 = axs[0,0].imshow(u,cmap='jet', origin='lower', interpolation=interp_method)
+        fig.colorbar(im0, ax=axs[0,0]); axs[0,0].set_title(r'$u_x$')
+        im1 = axs[0,1].imshow(v,cmap='jet',origin='lower', interpolation=interp_method)
+        fig.colorbar(im1, ax=axs[0,1]); axs[0,1].set_title(r'$u_y$')
+        im2 = axs[0,2].imshow(p,cmap='jet',origin='lower', interpolation=interp_method)
+        fig.colorbar(im2, ax=axs[0,2]); axs[0,2].set_title(r'$p$')
+
+        im3 = axs[1,0].imshow(div_elmwise,cmap='jet',origin='lower', interpolation=interp_method)
+        fig.colorbar(im3, ax=axs[1,0]); axs[1,0].set_title(r'$\int(\nabla\cdot u) d\Omega = $' + '{:.3e}'.format(div_total.item()))
+        im4 = axs[1,1].imshow((u**2 + v**2)**0.5,cmap='jet',origin='lower', interpolation=interp_method)
+        fig.colorbar(im4, ax=axs[1,1]); axs[1,1].set_title(r'$\sqrt{u_x^2+u_y^2}$')
         x = np.linspace(0, 1, u.shape[0])
         y = np.linspace(0, 1, u.shape[1])
-
-        im3 = axs[1,0].imshow(div,cmap='jet',origin='lower')
-        fig.colorbar(im3, ax=axs[1,0])  
-        im4 = axs[1,1].imshow((u**2 + v**2)**0.5,cmap='jet',origin='lower')
-        fig.colorbar(im4, ax=axs[1,1])
         xx , yy = np.meshgrid(x, y)
-        im5 = axs[1,2].streamplot(xx, yy, u, v, color='k', cmap='jet')
+        im5 = axs[1,2].streamplot(xx, yy, u, v, color='k', cmap='jet'); axs[1,2].set_title("Streamlines")
 
         mid_idx = int(self.domain_size/2)
         im = axs[2,0].plot(self.dataset.y[:,mid_idx], u[:,mid_idx],label='DiffNet')
         im = axs[2,0].plot(self.midline_Y,self.midline_U,label='Numerical')
-        axs[2,0].legend()
+        axs[2,0].set_xlabel('y'); axs[2,0].legend(); axs[2,0].set_title(r'$u_x @ x=0.5$')
         im = axs[2,1].plot(self.dataset.x[mid_idx,:], v[mid_idx,:],label='DiffNet')
         im = axs[2,1].plot(self.midline_X,self.midline_V,label='Numerical')
-        axs[2,1].legend()
+        axs[2,1].set_xlabel('x'); axs[2,1].legend(); axs[2,1].set_title(r'$u_y @ y=0.5$')
+        im = axs[2,2].plot(self.dataset.x[-1,:], p[-1,:],label='DiffNet')
+        im = axs[2,2].plot(self.midline_X,self.topline_P,label='Numerical')
+        axs[2,2].set_xlabel('x'); axs[2,2].legend(); axs[2,2].set_title(r'$p @ y=1.0$')
 
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
@@ -320,7 +346,8 @@ def main():
     domain_size = 32
     Re = 1.
     dir_string = "stokes_ldc"
-    max_epochs = 150
+    max_epochs = 80
+    opt_switch_epochs = 60
     LR = 1e-2
 
     x = np.linspace(0, 1, domain_size)
@@ -351,7 +378,9 @@ def main():
         dirpath=logger.log_dir, filename='{epoch}-{step}',
         mode='min', save_last=True)
 
-    trainer = Trainer(gpus=[0],callbacks=[early_stopping],
+    lbfgs_switch = OptimSwitchLBFGS(epochs=opt_switch_epochs)
+
+    trainer = Trainer(gpus=[0],callbacks=[early_stopping,lbfgs_switch],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
         max_epochs=max_epochs, deterministic=True, profiler="simple")
 
