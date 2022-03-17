@@ -160,6 +160,8 @@ class DiffNet2DFEM(DiffNetFEM):
         self.Nvalues = torch.ones((1,self.nbf_total,self.ngp_total,1,1))
         self.dN_x_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1))
         self.dN_y_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1))
+        self.d2N_x_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1))
+        self.d2N_y_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1))
         for jgp in range(self.ngp_1d):
             for igp in range(self.ngp_1d):
                 N_gp = torch.zeros((self.nbf_1d, self.nbf_1d))
@@ -183,6 +185,8 @@ class DiffNet2DFEM(DiffNetFEM):
                         self.Nvalues[0,IBF,IGP,:,:] = N_gp[jbf,ibf]
                         self.dN_x_values[0,IBF,IGP,:,:] = dN_x_gp[jbf,ibf]
                         self.dN_y_values[0,IBF,IGP,:,:] = dN_y_gp[jbf,ibf]
+                        self.d2N_x_values[0,IBF,IGP,:,:] = d2N_x_gp[jbf,ibf]
+                        self.d2N_y_values[0,IBF,IGP,:,:] = d2N_y_gp[jbf,ibf]
                 self.N_gp.append(nn.Parameter(N_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
                 self.dN_x_gp.append(nn.Parameter(dN_x_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
                 self.dN_y_gp.append(nn.Parameter(dN_y_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
@@ -329,6 +333,9 @@ class DiffNet3DFEM(DiffNetFEM):
         self.dN_x_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1,1))
         self.dN_y_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1,1))
         self.dN_z_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1,1))
+        self.d2N_x_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1,1))
+        self.d2N_y_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1,1))
+        self.d2N_z_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1,1))
         for kgp in range(self.ngp_1d):
             for jgp in range(self.ngp_1d):
                 for igp in range(self.ngp_1d):
@@ -364,6 +371,9 @@ class DiffNet3DFEM(DiffNetFEM):
                                 self.dN_x_values[0,IBF,IGP,:,:,:] = dN_x_gp[kbf,jbf,ibf]
                                 self.dN_y_values[0,IBF,IGP,:,:,:] = dN_y_gp[kbf,jbf,ibf]
                                 self.dN_z_values[0,IBF,IGP,:,:,:] = dN_z_gp[kbf,jbf,ibf]
+                                self.d2N_x_values[0,IBF,IGP,:,:,:] = d2N_x_gp[kbf,jbf,ibf]
+                                self.d2N_y_values[0,IBF,IGP,:,:,:] = d2N_y_gp[kbf,jbf,ibf]
+                                self.d2N_z_values[0,IBF,IGP,:,:,:] = d2N_z_gp[kbf,jbf,ibf]
 
                     self.N_gp.append(nn.Parameter(N_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
                     self.dN_x_gp.append(nn.Parameter(dN_x_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
