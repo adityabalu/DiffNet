@@ -28,6 +28,8 @@ from torch.utils import data
 
 from pytorch_lightning.callbacks.base import Callback
 
+torch.set_printoptions(precision=10)
+
 class OptimSwitchLBFGS(Callback):
     def __init__(self, epochs=50):
         self.switch_epoch = epochs
@@ -92,12 +94,14 @@ class Stokes_LDC(DiffNet2DFEM):
     """docstring for Stokes_LDC"""
     def __init__(self, network, dataset, **kwargs):
         super(Stokes_LDC, self).__init__(network[0], dataset, **kwargs)
+        self.plot_frequency = kwargs.get('plot_frequency', 1)
 
         self.net_u = network[0]
         self.net_v = network[1]
         self.net_p = network[2]
 
         self.Re = self.dataset.Re
+        self.viscosity = 1. / self.Re
         self.pspg_param = self.h**2 * self.Re / 12.
 
         ue, ve, pe = self.exact_solution(self.dataset.x, self.dataset.y)
@@ -109,7 +113,7 @@ class Stokes_LDC(DiffNet2DFEM):
         self.fx_gp = torch.FloatTensor(fx_gp)
         self.fy_gp = torch.FloatTensor(fy_gp)
 
-        u_bc = np.zeros_like(self.dataset.x); u_bc[-1,:] = 1. - 4. * (self.dataset.x[-1,:]-0.5)**2
+        u_bc = np.zeros_like(self.dataset.x); u_bc[-1,:] = 1. - 16. * (self.dataset.x[-1,:]-0.5)**4
         v_bc = np.zeros_like(self.dataset.x)
         p_bc = np.zeros_like(self.dataset.x)
 
@@ -117,7 +121,7 @@ class Stokes_LDC(DiffNet2DFEM):
         self.v_bc = torch.FloatTensor(v_bc)
         self.p_bc = torch.FloatTensor(p_bc)
 
-        numerical = np.loadtxt('stokes-ldc-numerical-results/midline_cuts_Re1_128x128.txt', delimiter=",", skiprows=1)
+        numerical = np.loadtxt('stokes-ldc-numerical-results/midline_cuts_Re1_regularized_128x128.txt', delimiter=",", skiprows=1)
         self.midline_X = numerical[:,0]
         self.midline_Y = numerical[:,0]
         self.midline_U = numerical[:,1]
@@ -145,13 +149,15 @@ class Stokes_LDC(DiffNet2DFEM):
         return Aglobal
 
     def calc_residuals(self, pred, inputs_tensor, forcing_tensor):
+        visco = self.viscosity
+
         N_values = self.Nvalues.type_as(pred[0])
         dN_x_values = self.dN_x_values.type_as(pred[0])
         dN_y_values = self.dN_y_values.type_as(pred[0])
         gpw = self.gpw.type_as(pred[0])
 
-        fx_gp = self.fx_gp.type_as(pred[0])
-        fy_gp = self.fy_gp.type_as(pred[0])
+        f1 = self.fx_gp.type_as(pred[0])
+        f2 = self.fy_gp.type_as(pred[0])
 
         u_bc = self.u_bc.unsqueeze(0).unsqueeze(0).type_as(pred[0])
         v_bc = self.v_bc.unsqueeze(0).unsqueeze(0).type_as(pred[0])
@@ -160,9 +166,9 @@ class Stokes_LDC(DiffNet2DFEM):
 
         f = forcing_tensor # renaming variable
 
-        u = pred[0] #[:,0:1,:,:]
-        v = pred[1] #[:,1:2,:,:]
-        p = pred[2] #[:,2:3,:,:]
+        u_pred = pred[0] #[:,0:1,:,:]
+        v_pred = pred[1] #[:,1:2,:,:]
+        p_pred = pred[2] #[:,2:3,:,:]
 
         # extract diffusivity and boundary conditions here
         x = inputs_tensor[:,0:1,:,:]
@@ -176,39 +182,39 @@ class Stokes_LDC(DiffNet2DFEM):
         JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
 
         # apply boundary conditions
-        u = torch.where(bc1>=0.5, u_bc, u)
-        v = torch.where(bc2>=0.5, v_bc, v)
-        p = torch.where(bc3>=0.5, p_bc, p)
+        u_pred = torch.where(bc1>=0.5, u_bc, u_pred)
+        v_pred = torch.where(bc2>=0.5, v_bc, v_pred)
+        p_pred = torch.where(bc3>=0.5, p_bc, p_pred)
         
-        u_gp = self.gauss_pt_evaluation(u)
-        v_gp = self.gauss_pt_evaluation(v)
-        p_gp = self.gauss_pt_evaluation(p)
-        p_x_gp = self.gauss_pt_evaluation_der_x(p)
-        p_y_gp = self.gauss_pt_evaluation_der_y(p)
-        u_x_gp = self.gauss_pt_evaluation_der_x(u)
-        u_y_gp = self.gauss_pt_evaluation_der_y(u)
-        v_x_gp = self.gauss_pt_evaluation_der_x(v)
-        v_y_gp = self.gauss_pt_evaluation_der_y(v)
+        u = self.gauss_pt_evaluation(u_pred)
+        v = self.gauss_pt_evaluation(v_pred)
+        p = self.gauss_pt_evaluation(p_pred)
+        p_x = self.gauss_pt_evaluation_der_x(p_pred)
+        p_y = self.gauss_pt_evaluation_der_y(p_pred)
+        u_x = self.gauss_pt_evaluation_der_x(u_pred)
+        u_y = self.gauss_pt_evaluation_der_y(u_pred)
+        v_x = self.gauss_pt_evaluation_der_x(v_pred)
+        v_y = self.gauss_pt_evaluation_der_y(v_pred)
 
         # CALCULATION STARTS
         # lhs
-        W_U1x = N_values*u_x_gp
-        W_U2y = N_values*v_y_gp
-        Wx_U1x = dN_x_values*u_x_gp
-        Wy_U1y = dN_y_values*u_y_gp
-        Wx_U2x = dN_x_values*v_x_gp
-        Wy_U2y = dN_y_values*v_y_gp
-        Wx_P = dN_x_values*p_gp
-        Wy_P = dN_y_values*p_gp
-        Wx_Px = dN_x_values*p_x_gp
-        Wy_Py = dN_y_values*p_y_gp
+        W_U1x = N_values*u_x
+        W_U2y = N_values*v_y
+        Wx_U1x = dN_x_values*u_x
+        Wy_U1y = dN_y_values*u_y
+        Wx_U2x = dN_x_values*v_x
+        Wy_U2y = dN_y_values*v_y
+        Wx_P = dN_x_values*p
+        Wy_P = dN_y_values*p
+        Wx_Px = dN_x_values*p_x
+        Wy_Py = dN_y_values*p_y
         # rhs
-        W_F1 = N_values*fx_gp
-        W_F2 = N_values*fy_gp
+        W_F1 = N_values*f1
+        W_F2 = N_values*f2
 
         # integrated values on lhs & rhs
-        temp1 = self.dataset.Re*(Wx_U1x+Wy_U1y) - Wx_P - W_F1
-        temp2 = self.dataset.Re*(Wx_U2x+Wy_U2y) - Wy_P - W_F2
+        temp1 = visco*(Wx_U1x+Wy_U1y) - Wx_P - W_F1
+        temp2 = visco*(Wx_U2x+Wy_U2y) - Wy_P - W_F2
         temp3 = W_U1x+W_U2y + self.pspg_param*(Wx_Px+Wy_Py)
 
         # unassembled residual
@@ -217,9 +223,9 @@ class Stokes_LDC(DiffNet2DFEM):
         R_split_3 = torch.sum(temp3*JxW, 2) # sum across all GP
 
         # assembly
-        R1 = torch.zeros_like(u); R1 = self.Q1_vector_assembly(R1, R_split_1)
-        R2 = torch.zeros_like(u); R2 = self.Q1_vector_assembly(R2, R_split_2)
-        R3 = torch.zeros_like(u); R3 = self.Q1_vector_assembly(R3, R_split_3)
+        R1 = torch.zeros_like(u_pred); R1 = self.Q1_vector_assembly(R1, R_split_1)
+        R2 = torch.zeros_like(v_pred); R2 = self.Q1_vector_assembly(R2, R_split_2)
+        R3 = torch.zeros_like(p_pred); R3 = self.Q1_vector_assembly(R3, R_split_3)
 
         # add boundary conditions to R <---- this step is very important
         R1 = torch.where(bc1>=0.5, u_bc, R1)
@@ -269,7 +275,8 @@ class Stokes_LDC(DiffNet2DFEM):
         u_x_gp = u_x_gp.squeeze().detach().cpu()
         v_y_gp = v_y_gp.squeeze().detach().cpu()
 
-        self.plot_contours(u, v, p, u_x_gp, v_y_gp)
+        if self.current_epoch % self.plot_frequency == 0:
+            self.plot_contours(u, v, p, u_x_gp, v_y_gp)
 
     def do_query(self, inputs, forcing):
         u, v, p, inputs_tensor, forcing_tensor = self.forward((inputs.unsqueeze(0).type_as(next(self.net_u.parameters())), forcing.unsqueeze(0).type_as(next(self.net_u.parameters()))))
@@ -338,6 +345,8 @@ class Stokes_LDC(DiffNet2DFEM):
         im = axs[2,2].plot(self.midline_X,self.topline_P,label='Numerical')
         axs[2,2].set_xlabel('x'); axs[2,2].legend(); axs[2,2].set_title(r'$p @ y=1.0$')
 
+        fig.suptitle("Re = {:.1f}, N = {}, LR = {:.1e}".format(self.Re, self.domain_size, self.learning_rate), fontsize=12)
+
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
@@ -346,9 +355,10 @@ def main():
     domain_size = 32
     Re = 1.
     dir_string = "stokes_ldc"
-    max_epochs = 70
-    opt_switch_epochs = 55
     LR = 1e-2
+    max_epochs = 101
+    opt_switch_epochs = 80
+    plot_frequency = 20
 
     x = np.linspace(0, 1, domain_size)
     y = np.linspace(0, 1, domain_size)
@@ -366,7 +376,7 @@ def main():
     net_p = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor[:,2:3,:,:]), requires_grad=True)])
     network = (net_u, net_v, net_p)
 
-    basecase = Stokes_LDC(network, dataset, domain_size=domain_size, batch_size=1, fem_basis_deg=1, learning_rate=LR)
+    basecase = Stokes_LDC(network, dataset, domain_size=domain_size, batch_size=1, fem_basis_deg=1, learning_rate=LR, plot_frequency=plot_frequency)
 
     # Initialize trainer
     logger = pl.loggers.TensorBoardLogger('.', name=dir_string)
