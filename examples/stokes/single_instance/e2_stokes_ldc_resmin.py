@@ -192,19 +192,19 @@ class Stokes_LDC(DiffNet2DFEM):
 
         # CALCULATION STARTS
         # lhs
-        W_U1x = N_values*u_x_gp*JxW
-        W_U2y = N_values*v_y_gp*JxW
-        Wx_U1x = dN_x_values*u_x_gp*JxW
-        Wy_U1y = dN_y_values*u_y_gp*JxW
-        Wx_U2x = dN_x_values*v_x_gp*JxW
-        Wy_U2y = dN_y_values*v_y_gp*JxW
-        Wx_P = dN_x_values*p_gp*JxW
-        Wy_P = dN_y_values*p_gp*JxW
-        Wx_Px = dN_x_values*p_x_gp*JxW
-        Wy_Py = dN_y_values*p_y_gp*JxW
+        W_U1x = N_values*u_x_gp
+        W_U2y = N_values*v_y_gp
+        Wx_U1x = dN_x_values*u_x_gp
+        Wy_U1y = dN_y_values*u_y_gp
+        Wx_U2x = dN_x_values*v_x_gp
+        Wy_U2y = dN_y_values*v_y_gp
+        Wx_P = dN_x_values*p_gp
+        Wy_P = dN_y_values*p_gp
+        Wx_Px = dN_x_values*p_x_gp
+        Wy_Py = dN_y_values*p_y_gp
         # rhs
-        W_F1 = N_values*fx_gp*JxW
-        W_F2 = N_values*fy_gp*JxW
+        W_F1 = N_values*fx_gp
+        W_F2 = N_values*fy_gp
 
         # integrated values on lhs & rhs
         temp1 = self.dataset.Re*(Wx_U1x+Wy_U1y) - Wx_P - W_F1
@@ -212,9 +212,9 @@ class Stokes_LDC(DiffNet2DFEM):
         temp3 = W_U1x+W_U2y + self.pspg_param*(Wx_Px+Wy_Py)
 
         # unassembled residual
-        R_split_1 = torch.sum(temp1, 2) # sum across all GP
-        R_split_2 = torch.sum(temp2, 2) # sum across all GP
-        R_split_3 = torch.sum(temp3, 2) # sum across all GP
+        R_split_1 = torch.sum(temp1*JxW, 2) # sum across all GP
+        R_split_2 = torch.sum(temp2*JxW, 2) # sum across all GP
+        R_split_3 = torch.sum(temp3*JxW, 2) # sum across all GP
 
         # assembly
         R1 = torch.zeros_like(u); R1 = self.Q1_vector_assembly(R1, R_split_1)
@@ -346,8 +346,8 @@ def main():
     domain_size = 32
     Re = 1.
     dir_string = "stokes_ldc"
-    max_epochs = 80
-    opt_switch_epochs = 60
+    max_epochs = 70
+    opt_switch_epochs = 55
     LR = 1e-2
 
     x = np.linspace(0, 1, domain_size)
@@ -366,7 +366,7 @@ def main():
     net_p = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor[:,2:3,:,:]), requires_grad=True)])
     network = (net_u, net_v, net_p)
 
-    basecase = Stokes_LDC((net_u, net_v, net_p), dataset, domain_size=domain_size, batch_size=1, fem_basis_deg=1, learning_rate=LR)
+    basecase = Stokes_LDC(network, dataset, domain_size=domain_size, batch_size=1, fem_basis_deg=1, learning_rate=LR)
 
     # Initialize trainer
     logger = pl.loggers.TensorBoardLogger('.', name=dir_string)
