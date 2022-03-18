@@ -26,6 +26,27 @@ from DiffNet.DiffNetFEM import DiffNet2DFEM
 from torch.utils import data
 # from e1_stokes_base_resmin import Stokes2D
 
+from pytorch_lightning.callbacks.base import Callback
+
+torch.set_printoptions(precision=10)
+
+class OptimSwitchLBFGS(Callback):
+    def __init__(self, epochs=50):
+        self.switch_epoch = epochs
+        self.print_declaration = False
+
+    def on_epoch_start(self, trainer, pl_module):
+        if trainer.current_epoch == self.switch_epoch:
+            if not self.print_declaration:
+                print("======================Switching to LBFGS after {} epochs ======================".format(self.switch_epoch))
+                self.print_declaration = True
+            opts = [torch.optim.LBFGS(pl_module.net_u.parameters(), lr=pl_module.learning_rate, max_iter=5),
+                        torch.optim.LBFGS(pl_module.net_v.parameters(), lr=pl_module.learning_rate, max_iter=5),
+                        # torch.optim.LBFGS(pl_module.net_p.parameters(), lr=pl_module.learning_rate, max_iter=5),
+                        torch.optim.Adam(pl_module.net_p.parameters(), lr=pl_module.learning_rate)
+                        ]
+            trainer.optimizers = opts
+
 class Stokes_MMS_Dataset(data.Dataset):
     'PyTorch dataset for Stokes_MMS_Dataset'
     def __init__(self, domain_size=64, Re=1):
@@ -69,14 +90,18 @@ class Stokes_MMS_Dataset(data.Dataset):
         forcing = np.ones_like(self.x)*(1/self.Re)
         return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
 
-class Stokes_MMS(DiffNet2DFEM):
-    """docstring for Stokes_MMS"""
+class Stokes_LDC(DiffNet2DFEM):
+    """docstring for Stokes_LDC"""
     def __init__(self, network, dataset, **kwargs):
-        super(Stokes_MMS, self).__init__(network, dataset, **kwargs)
-
+        super(Stokes_LDC, self).__init__(network[0], dataset, **kwargs)
         self.plot_frequency = kwargs.get('plot_frequency', 1)
 
+        self.net_u = network[0]
+        self.net_v = network[1]
+        self.net_p = network[2]
+
         self.Re = self.dataset.Re
+        self.viscosity = 1. / self.Re
         self.pspg_param = self.h**2 * self.Re / 12.
 
         ue, ve, pe = self.exact_solution(self.dataset.x, self.dataset.y)
@@ -88,9 +113,20 @@ class Stokes_MMS(DiffNet2DFEM):
         self.fx_gp = torch.FloatTensor(fx_gp)
         self.fy_gp = torch.FloatTensor(fy_gp)
 
-        self.u_bc = self.u_exact
-        self.v_bc = self.v_exact
-        self.p_bc = self.p_exact
+        u_bc = np.zeros_like(self.dataset.x); u_bc[-1,:] = 1. - 16. * (self.dataset.x[-1,:]-0.5)**4
+        v_bc = np.zeros_like(self.dataset.x)
+        p_bc = np.zeros_like(self.dataset.x)
+
+        self.u_bc = torch.FloatTensor(self.u_exact)
+        self.v_bc = torch.FloatTensor(self.v_exact)
+        self.p_bc = torch.FloatTensor(self.p_exact)
+
+        numerical = np.loadtxt('stokes-ldc-numerical-results/midline_cuts_Re1_regularized_128x128.txt', delimiter=",", skiprows=1)
+        self.midline_X = numerical[:,0]
+        self.midline_Y = numerical[:,0]
+        self.midline_U = numerical[:,1]
+        self.midline_V = numerical[:,2]
+        self.topline_P = numerical[:,3]
 
     def exact_solution(self, x, y):
         print("exact_solution -- MMS class called")
@@ -120,26 +156,26 @@ class Stokes_MMS(DiffNet2DFEM):
         return Aglobal
 
     def calc_residuals(self, pred, inputs_tensor, forcing_tensor):
-        # print("pred type = ", pred.type(), ", pred.shape = ", pred.shape)
-        # exit()
-        N_values = self.Nvalues.type_as(pred)
-        dN_x_values = self.dN_x_values.type_as(pred)
-        dN_y_values = self.dN_y_values.type_as(pred)
-        gpw = self.gpw.type_as(pred)
+        visco = self.viscosity
 
-        fx_gp = self.fx_gp.type_as(pred)
-        fy_gp = self.fy_gp.type_as(pred)
+        N_values = self.Nvalues.type_as(pred[0])
+        dN_x_values = self.dN_x_values.type_as(pred[0])
+        dN_y_values = self.dN_y_values.type_as(pred[0])
+        gpw = self.gpw.type_as(pred[0])
 
-        u_bc = self.u_bc.unsqueeze(0).unsqueeze(0).type_as(pred)
-        v_bc = self.v_bc.unsqueeze(0).unsqueeze(0).type_as(pred)
-        p_bc = self.p_bc.unsqueeze(0).unsqueeze(0).type_as(pred)
+        f1 = self.fx_gp.type_as(pred[0])
+        f2 = self.fy_gp.type_as(pred[0])
+
+        u_bc = self.u_bc.unsqueeze(0).unsqueeze(0).type_as(pred[0])
+        v_bc = self.v_bc.unsqueeze(0).unsqueeze(0).type_as(pred[0])
+        p_bc = self.p_bc.unsqueeze(0).unsqueeze(0).type_as(pred[0])
 
 
         f = forcing_tensor # renaming variable
 
-        u = pred[:,0:1,:,:]
-        v = pred[:,1:2,:,:]
-        p = pred[:,2:3,:,:]
+        u_pred = pred[0] #[:,0:1,:,:]
+        v_pred = pred[1] #[:,1:2,:,:]
+        p_pred = pred[2] #[:,2:3,:,:]
 
         # extract diffusivity and boundary conditions here
         x = inputs_tensor[:,0:1,:,:]
@@ -153,56 +189,50 @@ class Stokes_MMS(DiffNet2DFEM):
         JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
 
         # apply boundary conditions
-        u = torch.where(bc1>=0.5, u_bc, u)
-        v = torch.where(bc2>=0.5, v_bc, v)
-        p = torch.where(bc3>=0.5, p_bc, p)
-        # u = torch.where(bc2>=0.5, u*0.0 + 1.0, u)
-        # u = torch.where(bc2>=0.5, u*0.0 + 4.0*x*(1-x), u)
-
-        # v = torch.where(torch.logical_or((bc1>=0.5),(bc2>=0.5)), v*0.0, v)
-
-        # p = torch.where(bc3>=0.5, p*0.0, p)
-
-        u_gp = self.gauss_pt_evaluation(u)
-        v_gp = self.gauss_pt_evaluation(v)
-        p_gp = self.gauss_pt_evaluation(p)
-        p_x_gp = self.gauss_pt_evaluation_der_x(p)
-        p_y_gp = self.gauss_pt_evaluation_der_y(p)
-        u_x_gp = self.gauss_pt_evaluation_der_x(u)
-        u_y_gp = self.gauss_pt_evaluation_der_y(u)
-        v_x_gp = self.gauss_pt_evaluation_der_x(v)
-        v_y_gp = self.gauss_pt_evaluation_der_y(v)
+        u_pred = torch.where(bc1>=0.5, u_bc, u_pred)
+        v_pred = torch.where(bc2>=0.5, v_bc, v_pred)
+        p_pred = torch.where(bc3>=0.5, p_bc, p_pred)
+        
+        u = self.gauss_pt_evaluation(u_pred)
+        v = self.gauss_pt_evaluation(v_pred)
+        p = self.gauss_pt_evaluation(p_pred)
+        p_x = self.gauss_pt_evaluation_der_x(p_pred)
+        p_y = self.gauss_pt_evaluation_der_y(p_pred)
+        u_x = self.gauss_pt_evaluation_der_x(u_pred)
+        u_y = self.gauss_pt_evaluation_der_y(u_pred)
+        v_x = self.gauss_pt_evaluation_der_x(v_pred)
+        v_y = self.gauss_pt_evaluation_der_y(v_pred)
 
         # CALCULATION STARTS
         # lhs
-        W_U1x = N_values*u_x_gp*JxW
-        W_U2y = N_values*v_y_gp*JxW
-        Wx_U1x = dN_x_values*u_x_gp*JxW
-        Wy_U1y = dN_y_values*u_y_gp*JxW
-        Wx_U2x = dN_x_values*v_x_gp*JxW
-        Wy_U2y = dN_y_values*v_y_gp*JxW
-        Wx_P = dN_x_values*p_gp*JxW
-        Wy_P = dN_y_values*p_gp*JxW
-        Wx_Px = dN_x_values*p_x_gp*JxW
-        Wy_Py = dN_y_values*p_y_gp*JxW
+        W_U1x = N_values*u_x
+        W_U2y = N_values*v_y
+        Wx_U1x = dN_x_values*u_x
+        Wy_U1y = dN_y_values*u_y
+        Wx_U2x = dN_x_values*v_x
+        Wy_U2y = dN_y_values*v_y
+        Wx_P = dN_x_values*p
+        Wy_P = dN_y_values*p
+        Wx_Px = dN_x_values*p_x
+        Wy_Py = dN_y_values*p_y
         # rhs
-        W_F1 = N_values*fx_gp*JxW
-        W_F2 = N_values*fy_gp*JxW
+        W_F1 = N_values*f1
+        W_F2 = N_values*f2
 
         # integrated values on lhs & rhs
-        temp1 = self.dataset.Re*(Wx_U1x+Wy_U1y) - Wx_P - W_F1
-        temp2 = self.dataset.Re*(Wx_U2x+Wy_U2y) - Wy_P - W_F2
+        temp1 = visco*(Wx_U1x+Wy_U1y) - Wx_P - W_F1
+        temp2 = visco*(Wx_U2x+Wy_U2y) - Wy_P - W_F2
         temp3 = W_U1x+W_U2y + self.pspg_param*(Wx_Px+Wy_Py)
 
         # unassembled residual
-        R_split_1 = torch.sum(temp1, 2) # sum across all GP
-        R_split_2 = torch.sum(temp2, 2) # sum across all GP
-        R_split_3 = torch.sum(temp3, 2) # sum across all GP
+        R_split_1 = torch.sum(temp1*JxW, 2) # sum across all GP
+        R_split_2 = torch.sum(temp2*JxW, 2) # sum across all GP
+        R_split_3 = torch.sum(temp3*JxW, 2) # sum across all GP
 
         # assembly
-        R1 = torch.zeros_like(u); R1 = self.Q1_vector_assembly(R1, R_split_1)
-        R2 = torch.zeros_like(u); R2 = self.Q1_vector_assembly(R2, R_split_2)
-        R3 = torch.zeros_like(u); R3 = self.Q1_vector_assembly(R3, R_split_3)
+        R1 = torch.zeros_like(u_pred); R1 = self.Q1_vector_assembly(R1, R_split_1)
+        R2 = torch.zeros_like(v_pred); R2 = self.Q1_vector_assembly(R2, R_split_2)
+        R3 = torch.zeros_like(p_pred); R3 = self.Q1_vector_assembly(R3, R_split_3)
 
         # add boundary conditions to R <---- this step is very important
         R1 = torch.where(bc1>=0.5, u_bc, R1)
@@ -213,27 +243,36 @@ class Stokes_MMS(DiffNet2DFEM):
 
     def loss(self, pred, inputs_tensor, forcing_tensor):
         R1, R2, R3 = self.calc_residuals(pred, inputs_tensor, forcing_tensor)
-        loss = torch.norm(R1, 'fro') + torch.norm(R2, 'fro') + torch.norm(R3, 'fro')
-        return loss
+        # loss = torch.norm(R1, 'fro') + torch.norm(R2, 'fro') + torch.norm(R3, 'fro')
+        return torch.norm(R1, 'fro'), torch.norm(R2, 'fro'), torch.norm(R3, 'fro')
 
     def forward(self, batch):
         inputs_tensor, forcing_tensor = batch
-        # return self.network(inputs_tensor), inputs_tensor, forcing_tensor
-        return self.network[0], inputs_tensor, forcing_tensor
+        return self.net_u[0], self.net_v[0], self.net_p[0], inputs_tensor, forcing_tensor
+
+    def training_step(self, batch, batch_idx, optimizer_idx):
+        u, v, p, inputs_tensor, forcing_tensor = self.forward(batch)
+        loss_vals = self.loss((u, v, p), inputs_tensor, forcing_tensor)
+        self.log('loss_u', loss_vals[0].item())
+        self.log('loss_v', loss_vals[1].item())
+        self.log('loss_p', loss_vals[2].item())
+        return {"loss": loss_vals[optimizer_idx]}
+
+    def training_step_end(self, training_step_outputs):
+        loss = training_step_outputs["loss"]
+        return training_step_outputs
 
     def configure_optimizers(self):
-        """
-        Configure optimizer for network parameters
-        """
         lr = self.learning_rate
-        # opts = [torch.optim.LBFGS(self.network, lr=0.0001, max_iter=1)]
-        opts = [torch.optim.Adam(self.network, lr=lr)]
-        schd = []
-        # schd = [torch.optim.lr_scheduler.ExponentialLR(opts[0], gamma=0.7)]
-        return opts, schd
+        # opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
+        opts = [torch.optim.Adam(self.net_u, lr=lr), torch.optim.Adam(self.net_v, lr=lr), torch.optim.Adam(self.net_p, lr=lr)]
+        return opts, []
 
     def on_epoch_end(self):
-        self.network.eval()
+        # self.network.eval()
+        self.net_u.eval()
+        self.net_v.eval()
+        self.net_p.eval()
         inputs, forcing = self.dataset[0]
         u, v, p, u_x_gp, v_y_gp = self.do_query(inputs, forcing)
 
@@ -247,13 +286,9 @@ class Stokes_MMS(DiffNet2DFEM):
             self.plot_contours(u, v, p, u_x_gp, v_y_gp)
 
     def do_query(self, inputs, forcing):
-        pred, inputs_tensor, forcing_tensor = self.forward((inputs.unsqueeze(0).type_as(next(self.network.parameters())), forcing.unsqueeze(0).type_as(next(self.network.parameters()))))
+        u, v, p, inputs_tensor, forcing_tensor = self.forward((inputs.unsqueeze(0).type_as(next(self.net_u.parameters())), forcing.unsqueeze(0).type_as(next(self.net_u.parameters()))))
 
         f = forcing_tensor # renaming variable
-
-        u = pred[:,0:1,:,:]
-        v = pred[:,1:2,:,:]
-        p = pred[:,2:3,:,:]
 
         # extract diffusivity and boundary conditions here
         x = inputs_tensor[:,0:1,:,:]
@@ -263,22 +298,18 @@ class Stokes_MMS(DiffNet2DFEM):
         bc3 = inputs_tensor[:,4:5,:,:]
 
         # apply boundary conditions
-        u_bc = self.u_bc.unsqueeze(0).unsqueeze(0).type_as(pred)
-        v_bc = self.v_bc.unsqueeze(0).unsqueeze(0).type_as(pred)
-        p_bc = self.p_bc.unsqueeze(0).unsqueeze(0).type_as(pred)
-        # u = torch.where(bc1>=0.05, u*0.0, u)
-        # u = torch.where(bc2>=0.05, u*0.0 + 1.0, u)
+        u_bc = self.u_bc.unsqueeze(0).unsqueeze(0).type_as(u)
+        v_bc = self.v_bc.unsqueeze(0).unsqueeze(0).type_as(u)
+        p_bc = self.p_bc.unsqueeze(0).unsqueeze(0).type_as(u)
 
-        # v = torch.where(torch.logical_or((bc1>=0.5),(bc2>=0.5)), v*0.0, v)
-        # p = torch.where(bc3>=0.5, p*0.0, p)
         u = torch.where(bc1>=0.5, u_bc, u)
         v = torch.where(bc2>=0.5, v_bc, v)
         p = torch.where(bc3>=0.5, p_bc, p)
 
-        u_x = self.gauss_pt_evaluation_der_x(u)
-        v_y = self.gauss_pt_evaluation_der_y(v)
+        u_x_gp = self.gauss_pt_evaluation_der_x(u)
+        v_y_gp = self.gauss_pt_evaluation_der_y(v)
 
-        return u, v, p, u_x, v_y
+        return u, v, p, u_x_gp, v_y_gp
 
     def plot_contours(self, u, v, p, u_x_gp, v_y_gp):
         fig, axs = plt.subplots(3, 3, figsize=(4*3,2.4*3),
@@ -287,8 +318,8 @@ class Stokes_MMS(DiffNet2DFEM):
         for ax_row in axs:
             for ax in ax_row:
                 ax.set_xticks([])
-                ax.set_yticks([])
-
+                ax.set_yticks([]) 
+        
         div_gp = u_x_gp + v_y_gp
         div_elmwise = torch.sum(div_gp, 0)
         div_total = torch.sum(div_elmwise)
@@ -326,23 +357,30 @@ class Stokes_MMS(DiffNet2DFEM):
 
 def main():
     domain_size = 16
-    dir_string = "stokes_mms"
-    max_epochs = 201
+    Re = 1.
+    dir_string = "stokes_mms_loss2"
     LR = 3e-4
-    plot_frequency=50
+    max_epochs = 201
+    opt_switch_epochs = max_epochs
+    plot_frequency = 20
 
     x = np.linspace(0, 1, domain_size)
     y = np.linspace(0, 1, domain_size)
     xx , yy = np.meshgrid(x, y)
 
-    dataset = Stokes_MMS_Dataset(domain_size=domain_size)
-    v1 = np.zeros_like(dataset.x) # np.sin(math.pi*xx)*np.cos(math.pi*yy)
-    v2 = np.zeros_like(dataset.x) # -np.cos(math.pi*xx)*np.sin(math.pi*yy)
-    p  = np.zeros_like(dataset.x) # np.sin(math.pi*xx)*np.sin(math.pi*yy)
+    dataset = Stokes_MMS_Dataset(domain_size=domain_size, Re=Re)
+    v1 = np.zeros_like(dataset.x)
+    v2 = np.zeros_like(dataset.x)
+    p  = np.zeros_like(dataset.x)
     u_tensor = np.expand_dims(np.array([v1,v2,p]),0)
-    print(u_tensor.shape)
-    network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
-    basecase = Stokes_MMS(network, dataset, domain_size=domain_size, batch_size=1, fem_basis_deg=1, learning_rate=LR, plot_frequency=plot_frequency)
+    
+    # network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
+    net_u = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor[:,0:1,:,:]), requires_grad=True)])
+    net_v = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor[:,1:2,:,:]), requires_grad=True)])
+    net_p = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor[:,2:3,:,:]), requires_grad=True)])
+    network = (net_u, net_v, net_p)
+
+    basecase = Stokes_LDC(network, dataset, domain_size=domain_size, batch_size=1, fem_basis_deg=1, learning_rate=LR, plot_frequency=plot_frequency)
 
     # Initialize trainer
     logger = pl.loggers.TensorBoardLogger('.', name=dir_string)
@@ -354,14 +392,18 @@ def main():
         dirpath=logger.log_dir, filename='{epoch}-{step}',
         mode='min', save_last=True)
 
-    trainer = Trainer(gpus=[0],callbacks=[early_stopping],
+    lbfgs_switch = OptimSwitchLBFGS(epochs=opt_switch_epochs)
+
+    trainer = Trainer(gpus=[0],callbacks=[early_stopping,lbfgs_switch],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
         max_epochs=max_epochs, deterministic=True, profiler="simple")
 
     # Training
     trainer.fit(basecase)
     # Save network
-    torch.save(basecase.network, os.path.join(logger.log_dir, 'network.pt'))
+    torch.save(basecase.net_u, os.path.join(logger.log_dir, 'net_u.pt'))
+    torch.save(basecase.net_v, os.path.join(logger.log_dir, 'net_v.pt'))
+    torch.save(basecase.net_p, os.path.join(logger.log_dir, 'net_p.pt'))
 
 
 if __name__ == '__main__':

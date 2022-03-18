@@ -12,7 +12,7 @@ import matplotlib
 # matplotlib.use("pgf")
 matplotlib.rcParams.update({
     # 'font.family': 'serif',
-    'font.size':12,
+    'font.size':8,
 })
 from matplotlib import pyplot as plt
 
@@ -29,6 +29,7 @@ class Stokes2D(DiffNet2DFEM):
     """docstring for Stokes2D"""
     def __init__(self, network, dataset, **kwargs):
         super(Stokes2D, self).__init__(network, dataset, **kwargs)
+        self.plot_frequency = kwargs.get('plot_frequency', 1)
         
         self.Re = self.dataset.Re
         self.pspg_param = self.h**2 * self.Re / 12.
@@ -178,8 +179,16 @@ class Stokes2D(DiffNet2DFEM):
     def on_epoch_end(self):
         self.network.eval()
         inputs, forcing = self.dataset[0]
-        u, v, p, u_x, v_y = self.do_query(inputs, forcing)
-        self.plot_contours(u, v, p, u_x, v_y)
+        u, v, p, u_x_gp, v_y_gp = self.do_query(inputs, forcing)
+
+        u = u.squeeze().detach().cpu()
+        v = v.squeeze().detach().cpu()
+        p = p.squeeze().detach().cpu()
+        u_x_gp = u_x_gp.squeeze().detach().cpu()
+        v_y_gp = v_y_gp.squeeze().detach().cpu()
+
+        if self.current_epoch % self.plot_frequency == 0:
+            self.plot_contours(u, v, p, u_x_gp, v_y_gp)
 
     def do_query(self, inputs, forcing):
         pred, inputs_tensor, forcing_tensor = self.forward((inputs.unsqueeze(0).type_as(next(self.network.parameters())), forcing.unsqueeze(0).type_as(next(self.network.parameters()))))
@@ -210,12 +219,8 @@ class Stokes2D(DiffNet2DFEM):
         v = torch.where(bc2>=0.5, v_bc, v)
         p = torch.where(bc3>=0.5, p_bc, p)
         
-        u_x = self.gauss_pt_evaluation_der_x(u)[:,0,:,:].squeeze().detach().cpu()
-        v_y = self.gauss_pt_evaluation_der_y(v)[:,0,:,:].squeeze().detach().cpu()
-
-        u = u.squeeze().detach().cpu()
-        v = v.squeeze().detach().cpu()
-        p = p.squeeze().detach().cpu()        
+        u_x = self.gauss_pt_evaluation_der_x(u)
+        v_y = self.gauss_pt_evaluation_der_y(v)
 
         return u, v, p, u_x, v_y
 
