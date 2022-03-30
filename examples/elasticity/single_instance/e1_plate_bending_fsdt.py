@@ -26,8 +26,29 @@ from DiffNet.DiffNetFEM import DiffNet2DFEM
 from torch.utils import data
 # from e1_stokes_base_resmin import Stokes2D
 
+from pytorch_lightning.callbacks.base import Callback
+
+torch.set_printoptions(precision=10)
+
+class OptimSwitchLBFGS(Callback):
+    def __init__(self, epochs=50):
+        self.switch_epoch = epochs
+        self.print_declaration = False
+
+    def on_epoch_start(self, trainer, pl_module):
+        if trainer.current_epoch == self.switch_epoch:
+            if not self.print_declaration:
+                print("======================Switching to LBFGS after {} epochs ======================".format(self.switch_epoch))
+                self.print_declaration = True
+            opts = [torch.optim.LBFGS(pl_module.net_u.parameters(), lr=pl_module.learning_rate, max_iter=5),
+                        torch.optim.LBFGS(pl_module.net_v.parameters(), lr=pl_module.learning_rate, max_iter=5),
+                        # torch.optim.LBFGS(pl_module.net_p.parameters(), lr=pl_module.learning_rate, max_iter=5),
+                        torch.optim.Adam(pl_module.net_p.parameters(), lr=pl_module.learning_rate)
+                        ]
+            trainer.optimizers = opts
+
 class Elastic_FSDT_Dataset(data.Dataset):
-    'PyTorch dataset for Elastic_FSDT_Dataset'
+    'PyTorch dataset for Stokes_MMS_Dataset'
     def __init__(self, domain_size=64, Re=1):
         """
         Initialization
@@ -45,15 +66,14 @@ class Elastic_FSDT_Dataset(data.Dataset):
         self.bc1[-1, :] = 1.0
         self.bc1[ :, 0] = 1.0
         self.bc1[ :,-1] = 1.0
-        # bc2 for fixed boundaries
+
         self.bc2 = np.zeros_like(xx)
         self.bc2[ 0, :] = 1.0
         self.bc2[-1, :] = 1.0
         self.bc2[ :, 0] = 1.0
         self.bc2[ :,-1] = 1.0
 
-        self.bc3 = np.zeros_like(xx)
-        self.bc3[0:1,0:1] = 1.0
+        self.bc3 = self.bc1
 
         self.Re = Re
         self.n_samples = 100
@@ -72,45 +92,86 @@ class Elastic_FSDT_Dataset(data.Dataset):
 class Elastic_FSDT(DiffNet2DFEM):
     """docstring for Elastic_FSDT"""
     def __init__(self, network, dataset, **kwargs):
-        super(Elastic_FSDT, self).__init__(network, dataset, **kwargs)
-
+        super(Elastic_FSDT, self).__init__(network[0], dataset, **kwargs)
         self.plot_frequency = kwargs.get('plot_frequency', 1)
 
+        # self.net_u = network[0]
+        # self.net_v = network[1]
+        # self.net_p = network[2]
+        self.net_w = network[0]
+        self.net_phi_x = network[1]
+        self.net_phi_y = network[2]
+
         self.Re = self.dataset.Re
+        # self.viscosity = 1. / self.Re
         self.pspg_param = self.h**2 * self.Re / 12.
 
-        ue, ve, pe = self.exact_solution(self.dataset.x, self.dataset.y)
-        self.u_exact = torch.FloatTensor(ue)
-        self.v_exact = torch.FloatTensor(ve)
-        self.p_exact = torch.FloatTensor(pe)
+        # ue, ve, pe = self.exact_solution(self.dataset.x, self.dataset.y)
+        # self.u_exact = torch.FloatTensor(ue)
+        # self.v_exact = torch.FloatTensor(ve)
+        # self.p_exact = torch.FloatTensor(pe)
 
         fx_gp, fy_gp = self.forcing(self.xgp, self.ygp)
         self.fx_gp = torch.FloatTensor(fx_gp)
         self.fy_gp = torch.FloatTensor(fy_gp)
 
-        self.u_bc = self.u_exact
-        self.v_bc = self.v_exact
-        self.p_bc = self.p_exact
+        # u_bc = np.zeros_like(self.dataset.x); u_bc[-1,:] = 1. - 16. * (self.dataset.x[-1,:]-0.5)**4
+        # v_bc = np.zeros_like(self.dataset.x)
+        # p_bc = np.zeros_like(self.dataset.x)
 
-    def exact_solution(self, x, y):
-        print("exact_solution -- MMS class called")
-        pi = math.pi
-        sin = np.sin
-        cos = np.cos        
-        u_exact =  sin(pi*x)*cos(pi*y)
-        v_exact = -cos(pi*x)*sin(pi*y)
-        p_exact =  sin(pi*x)*sin(pi*y)
-        return u_exact, v_exact, p_exact
+        # self.u_bc = torch.FloatTensor(u_bc)
+        # self.v_bc = torch.FloatTensor(v_bc)
+        # self.p_bc = torch.FloatTensor(p_bc)
+
+        ###########################################
+        # Define and initialize boundary conditions
+        # Insert code here
+        self.w_bc = torch.FloatTensor(np.zeros_like(self.dataset.x))
+        self.phi_x_bc = torch.FloatTensor(np.zeros_like(self.dataset.x))
+        self.phi_y_bc = torch.FloatTensor(np.zeros_like(self.dataset.x))
+        ########################################### 
+
+        # numerical = np.loadtxt('ns-ldc-numerical-results/midline_cuts_Re100_regularized_128x128.txt', delimiter=",", skiprows=1)
+        # self.midline_X = numerical[:,0]
+        # self.midline_Y = numerical[:,0]
+        # self.midline_U = numerical[:,1]
+        # self.midline_V = numerical[:,2]
+        # self.topline_P = numerical[:,3]
+
+    # def exact_solution(self, x, y):
+    #     print("exact_solution -- LDC class called")
+    #     u_exact = np.zeros_like(x)
+    #     v_exact = np.zeros_like(x)
+    #     p_exact = np.zeros_like(x)
+    #     return u_exact, v_exact, p_exact
 
     def forcing(self, x, y):
-        print("forcing -- MMS class called")
-        pi = math.pi
-        sin = np.sin
-        cos = np.cos
-        exp = np.exp        
-        fx =  2*pi**2*sin(pi*x)*cos(pi*y) + pi*sin(pi*y)*cos(pi*x)
-        fy = -2*pi**2*sin(pi*y)*cos(pi*x) + pi*sin(pi*x)*cos(pi*y)
+        print("forcing -- LDC class called")
+        fx = np.ones_like(x)
+        fy = np.ones_like(x)
         return fx, fy
+
+    # def calc_tau(self, h_tuple, adv_tuple, visco):
+    #     '''
+    #     values input to this function should be detached
+    #     from the computation graph
+    #     '''
+    #     hx, hy = h_tuple
+    #     u, v = adv_tuple
+
+    #     g = torch.tensor([2./hx, 2./hy])
+    #     G = torch.tensor([[4./hx**2, 0.], [0., 4./hy**2]])
+    #     Cinv = 36.
+    #     # assume regular grid
+    #     adv_part = G[0,0] * u**2 + G[1,1] * v**2
+    #     diffusion_part = Cinv* visco**2 * (G[0,0]**2 + G[1,1]**2)
+    #     # calc taum at GP
+    #     temp = torch.sqrt(adv_part + diffusion_part)
+    #     taum = 1. / temp
+    #     # calc tauc at GP
+    #     gg_inv = 1. / (g[0]**2 + g[1]**2)
+    #     tauc = temp * gg_inv
+    #     return taum, tauc
 
     def Q1_vector_assembly(self, Aglobal, Aloc_all):
         Aglobal[:,0, 0:-1, 0:-1] += Aloc_all[:,0, :, :]
@@ -120,26 +181,28 @@ class Elastic_FSDT(DiffNet2DFEM):
         return Aglobal
 
     def calc_residuals(self, pred, inputs_tensor, forcing_tensor):
-        # print("pred type = ", pred.type(), ", pred.shape = ", pred.shape)
-        # exit()
-        N_values = self.Nvalues.type_as(pred)
-        dN_x_values = self.dN_x_values.type_as(pred)
-        dN_y_values = self.dN_y_values.type_as(pred)
-        gpw = self.gpw.type_as(pred)
+        # visco = self.viscosity
+        hx = self.h
+        hy = self.h
 
-        fx_gp = self.fx_gp.type_as(pred)
-        fy_gp = self.fy_gp.type_as(pred)
+        N_values = self.Nvalues.type_as(pred[0])
+        dN_x_values = self.dN_x_values.type_as(pred[0])
+        dN_y_values = self.dN_y_values.type_as(pred[0])
+        gpw = self.gpw.type_as(pred[0])
 
-        u_bc = self.u_bc.unsqueeze(0).unsqueeze(0).type_as(pred)
-        v_bc = self.v_bc.unsqueeze(0).unsqueeze(0).type_as(pred)
-        p_bc = self.p_bc.unsqueeze(0).unsqueeze(0).type_as(pred)
+        f1 = self.fx_gp.type_as(pred[0])
+        f2 = self.fy_gp.type_as(pred[0])
+
+        w_bc = self.w_bc.unsqueeze(0).unsqueeze(0).type_as(pred[0])
+        phi_x_bc = self.phi_x_bc.unsqueeze(0).unsqueeze(0).type_as(pred[0])
+        phi_y_bc = self.phi_y_bc.unsqueeze(0).unsqueeze(0).type_as(pred[0])
 
 
         f = forcing_tensor # renaming variable
 
-        u = pred[:,0:1,:,:]
-        v = pred[:,1:2,:,:]
-        p = pred[:,2:3,:,:]
+        w_pred = pred[0] #[:,0:1,:,:]
+        phi_x_pred = pred[1] #[:,1:2,:,:]
+        phi_y_pred = pred[2] #[:,2:3,:,:]
 
         # extract diffusivity and boundary conditions here
         x = inputs_tensor[:,0:1,:,:]
@@ -149,91 +212,188 @@ class Elastic_FSDT(DiffNet2DFEM):
         bc3 = inputs_tensor[:,4:5,:,:]
 
         # DERIVE NECESSARY VALUES
-        trnsfrm_jac = (0.5*self.h)**2
+        trnsfrm_jac = (0.5*hx)*(0.5*hy)
         JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
 
         # apply boundary conditions
-        u = torch.where(bc1>=0.5, u_bc, u)
-        v = torch.where(bc2>=0.5, v_bc, v)
-        p = torch.where(bc3>=0.5, p_bc, p)
-        # u = torch.where(bc2>=0.5, u*0.0 + 1.0, u)
-        # u = torch.where(bc2>=0.5, u*0.0 + 4.0*x*(1-x), u)
+        w_pred = torch.where(bc2>=0.5, w_bc, w_pred)
+        phi_x_pred = torch.where(bc2>=0.5, phi_x_bc, phi_x_pred)
+        phi_y_pred = torch.where(bc2>=0.5, phi_y_bc, phi_y_pred)
 
-        # v = torch.where(torch.logical_or((bc1>=0.5),(bc2>=0.5)), v*0.0, v)
+        # Init and compute constants - eqn 
+        E = 1.0
+        v = 0.25
+        h = 0.1
+        K_s = 1.0
+        D_11 = (E * h**3) / (12 * (1 - v**2))
+        D_22 = D_11
+        D_12 = (E * v * h**3) / (12 * (1 - v**2))
+        D_66 = (E * h**3) / (12 * (1 + v))
+        A_44 = (E * h) / (2 * (1 + v))
+        A_55 = (E * h) / (2 * (1 + v))
 
-        # p = torch.where(bc3>=0.5, p*0.0, p)
+        # Compute quadrature pts
+        w_gp = self.gauss_pt_evaluation(w_pred)
+        w_x_gp = self.gauss_pt_evaluation_der_x(w_pred)
+        w_y_gp = self.gauss_pt_evaluation_der_y(w_pred)
+        phi_x_gp = self.gauss_pt_evaluation(phi_x_pred)
+        phi_x_x_gp = self.gauss_pt_evaluation_der_x(phi_x_pred)
+        phi_x_y_gp = self.gauss_pt_evaluation_der_y(phi_x_pred)
+        phi_y_gp = self.gauss_pt_evaluation(phi_y_pred)
+        phi_y_x_gp = self.gauss_pt_evaluation_der_x(phi_y_pred)
+        phi_y_y_gp = self.gauss_pt_evaluation_der_y(phi_y_pred)
 
-        u_gp = self.gauss_pt_evaluation(u)
-        v_gp = self.gauss_pt_evaluation(v)
-        p_gp = self.gauss_pt_evaluation(p)
-        p_x_gp = self.gauss_pt_evaluation_der_x(p)
-        p_y_gp = self.gauss_pt_evaluation_der_y(p)
-        u_x_gp = self.gauss_pt_evaluation_der_x(u)
-        u_y_gp = self.gauss_pt_evaluation_der_y(u)
-        v_x_gp = self.gauss_pt_evaluation_der_x(v)
-        v_y_gp = self.gauss_pt_evaluation_der_y(v)
+        # Init forcing function q
+        q = torch.ones_like(w_gp)
+
+        # Compute eqn 4
+        Q_x = K_s * A_55 * (phi_x_gp + w_x_gp)
+        Q_y = K_s * A_44 * (phi_y_gp + w_y_gp)
+        M_xx = (D_11 * phi_x_x_gp) + (D_12 * phi_y_y_gp)
+        M_yy = (D_12 * phi_x_x_gp) + (D_22 * phi_y_y_gp)
+        M_xy = D_66 * (phi_x_y_gp + phi_y_x_gp)
+
+        # Compute eqn 3
+        # lhs
+        lhs_3a = (dN_x_values * Q_x) + (dN_y_values * Q_y)
+        lhs_3b = (dN_x_values * M_xx) + (dN_y_values * M_xy) + (N_values * Q_x)
+        lhs_3c = (dN_x_values * M_xy) + (dN_y_values * M_yy) + (N_values * Q_y)
+        # rhs
+        rhs_3a = N_values * q
+
+
+
+
+
+        # # variable values at GP
+        # u = self.gauss_pt_evaluation(w_pred)
+        # v = self.gauss_pt_evaluation(v_pred)
+        # p = self.gauss_pt_evaluation(p_pred)
+        # # 1st derivatives at GP
+        # p_x = self.gauss_pt_evaluation_der_x(p_pred)
+        # p_y = self.gauss_pt_evaluation_der_y(p_pred)
+        # u_x = self.gauss_pt_evaluation_der_x(w_pred)
+        # u_y = self.gauss_pt_evaluation_der_y(w_pred)
+        # v_x = self.gauss_pt_evaluation_der_x(v_pred)
+        # v_y = self.gauss_pt_evaluation_der_y(v_pred)
+        # # 2nd derivatives at GP
+        # u_xx = self.gauss_pt_evaluation_der2_x(u_pred)
+        # u_yy = self.gauss_pt_evaluation_der2_y(u_pred)
+        # v_xx = self.gauss_pt_evaluation_der2_x(v_pred)
+        # v_yy = self.gauss_pt_evaluation_der2_y(v_pred)
+        # # convection terms
+        # adv1 = u*u_x + v*u_y
+        # adv2 = u*v_x + v*v_y        
+        # # laplacian terms
+        # lap1 = u_xx + u_yy
+        # lap2 = v_xx + v_yy
+        # # divergence
+        # divergence = u_x + v_y
+        # # coarse scale strong residuals
+        # res1 = adv1 - visco*lap1 + p_x - f1
+        # res2 = adv2 - visco*lap2 + p_y - f2
+        # res3 = divergence
+        # taum, tauc = self.calc_tau((hx,hy), (u.clone().detach(),v.clone().detach()), visco)
 
         # CALCULATION STARTS
         # lhs
-        W_U1x = N_values*u_x_gp*JxW
-        W_U2y = N_values*v_y_gp*JxW
-        Wx_U1x = dN_x_values*u_x_gp*JxW
-        Wy_U1y = dN_y_values*u_y_gp*JxW
-        Wx_U2x = dN_x_values*v_x_gp*JxW
-        Wy_U2y = dN_y_values*v_y_gp*JxW
-        Wx_P = dN_x_values*p_gp*JxW
-        Wy_P = dN_y_values*p_gp*JxW
-        Wx_Px = dN_x_values*p_x_gp*JxW
-        Wy_Py = dN_y_values*p_y_gp*JxW
-        # rhs
-        W_F1 = N_values*fx_gp*JxW
-        W_F2 = N_values*fy_gp*JxW
+        # W_U1x = N_values*u_x
+        # W_U2y = N_values*v_y
+        # Wx_U1x = dN_x_values*u_x
+        # Wy_U1y = dN_y_values*u_y
+        # Wx_U2x = dN_x_values*v_x
+        # Wy_U2y = dN_y_values*v_y
+        # Wx_P = dN_x_values*p
+        # Wy_P = dN_y_values*p
+        # Wx_Px = dN_x_values*p_x
+        # Wy_Py = dN_y_values*p_y
+        # W_Adv1 = N_values*adv1
+        # W_Adv2 = N_values*adv2
+        # W_Div = N_values*divergence
+        # Wx_Div = dN_x_values*divergence
+        # Wy_Div = dN_y_values*divergence
+        # U_dot_gradW = u * dN_x_values + v * dN_y_values
+        # Res_dot_gradW = res1 * dN_x_values + res2 * dN_y_values
+        # Res_dot_gradU1 = res1 * u_x + res2 * u_y
+        # Res_dot_gradU2 = res1 * v_x + res2 * v_y
+        # # crossterm 1
+        # C1_1 = U_dot_gradW*res1
+        # C1_2 = U_dot_gradW*res2
+        # # crossterm 2
+        # C2_1 = N_values*Res_dot_gradU1
+        # C2_2 = N_values*Res_dot_gradU2
+        # # Reynolds stress term
+        # Rey_1 = res1*Res_dot_gradW
+        # Rey_2 = res2*Res_dot_gradW
+        # # PSPG
+        # Wx_Res1 = dN_x_values*res1
+        # Wy_Res2 = dN_y_values*res2
+        # # rhs
+        # W_F1 = N_values*f1
+        # W_F2 = N_values*f2
 
         # integrated values on lhs & rhs
-        temp1 = self.dataset.Re*(Wx_U1x+Wy_U1y) - Wx_P - W_F1
-        temp2 = self.dataset.Re*(Wx_U2x+Wy_U2y) - Wy_P - W_F2
-        temp3 = W_U1x+W_U2y + self.pspg_param*(Wx_Px+Wy_Py)
+        # temp1 = W_Adv1 + visco*(Wx_U1x+Wy_U1y) - Wx_P - W_F1
+        # temp2 = W_Adv2 + visco*(Wx_U2x+Wy_U2y) - Wy_P - W_F2
+        # temp3 = W_U1x+W_U2y + self.pspg_param*(Wx_Px+Wy_Py)
+
+        # # integrated values on lhs & rhs
+        # temp1 = W_Adv1 + visco*(Wx_U1x+Wy_U1y) - Wx_P - W_F1 + taum*C1_1 - taum*C2_1 - taum**2*Rey_1 + tauc*Wx_Div
+        # temp2 = W_Adv2 + visco*(Wx_U2x+Wy_U2y) - Wy_P - W_F2 + taum*C1_2 - taum*C2_2 - taum**2*Rey_2 + tauc*Wy_Div
+        # temp3 = W_Div + taum*(Wx_Res1 + Wy_Res2)
+        temp1 = lhs_3a - rhs_3a
+        temp2 = lhs_3b
+        temp3 = lhs_3c
 
         # unassembled residual
-        R_split_1 = torch.sum(temp1, 2) # sum across all GP
-        R_split_2 = torch.sum(temp2, 2) # sum across all GP
-        R_split_3 = torch.sum(temp3, 2) # sum across all GP
+        R_split_1 = torch.sum(temp1*JxW, 2) # sum across all GP
+        R_split_2 = torch.sum(temp2*JxW, 2) # sum across all GP
+        R_split_3 = torch.sum(temp3*JxW, 2) # sum across all GP
 
         # assembly
-        R1 = torch.zeros_like(u); R1 = self.Q1_vector_assembly(R1, R_split_1)
-        R2 = torch.zeros_like(u); R2 = self.Q1_vector_assembly(R2, R_split_2)
-        R3 = torch.zeros_like(u); R3 = self.Q1_vector_assembly(R3, R_split_3)
+        R1 = torch.zeros_like(w_pred); R1 = self.Q1_vector_assembly(R1, R_split_1)
+        R2 = torch.zeros_like(w_pred); R2 = self.Q1_vector_assembly(R2, R_split_2)
+        R3 = torch.zeros_like(w_pred); R3 = self.Q1_vector_assembly(R3, R_split_3)
 
         # add boundary conditions to R <---- this step is very important
-        R1 = torch.where(bc1>=0.5, u_bc, R1)
-        R2 = torch.where(bc2>=0.5, v_bc, R2)
-        R3 = torch.where(bc3>=0.5, p_bc, R3)
+        R1 = torch.where(bc2>=0.5, w_bc, R1)
+        R2 = torch.where(bc2>=0.5, phi_x_bc, R2)
+        R3 = torch.where(bc2>=0.5, phi_y_bc, R3)
 
         return R1, R2, R3
 
     def loss(self, pred, inputs_tensor, forcing_tensor):
         R1, R2, R3 = self.calc_residuals(pred, inputs_tensor, forcing_tensor)
-        loss = torch.norm(R1, 'fro') + torch.norm(R2, 'fro') + torch.norm(R3, 'fro')
-        return loss
+        # loss = torch.norm(R1, 'fro') + torch.norm(R2, 'fro') + torch.norm(R3, 'fro')
+        return torch.norm(R1, 'fro'), torch.norm(R2, 'fro'), torch.norm(R3, 'fro')
 
     def forward(self, batch):
         inputs_tensor, forcing_tensor = batch
-        # return self.network(inputs_tensor), inputs_tensor, forcing_tensor
-        return self.network[0], inputs_tensor, forcing_tensor
+        return self.net_w[0], self.net_phi_x[0], self.net_phi_y[0], inputs_tensor, forcing_tensor
+
+    def training_step(self, batch, batch_idx, optimizer_idx):
+        w, phi_x, phi_y, inputs_tensor, forcing_tensor = self.forward(batch)
+        loss_vals = self.loss((w, phi_x, phi_y), inputs_tensor, forcing_tensor)
+        self.log('loss_w', loss_vals[0].item())
+        self.log('loss_phi_x', loss_vals[1].item())
+        self.log('loss_phi_y', loss_vals[2].item())
+        return {"loss": loss_vals[optimizer_idx]}
+
+    def training_step_end(self, training_step_outputs):
+        loss = training_step_outputs["loss"]
+        return training_step_outputs
 
     def configure_optimizers(self):
-        """
-        Configure optimizer for network parameters
-        """
         lr = self.learning_rate
-        # opts = [torch.optim.LBFGS(self.network, lr=0.0001, max_iter=1)]
-        opts = [torch.optim.Adam(self.network, lr=lr)]
-        schd = []
-        # schd = [torch.optim.lr_scheduler.ExponentialLR(opts[0], gamma=0.7)]
-        return opts, schd
+        # opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
+        opts = [torch.optim.Adam(self.net_w, lr=lr), torch.optim.Adam(self.net_phi_x, lr=lr), torch.optim.Adam(self.net_phi_y, lr=lr)]
+        return opts, []
 
     def on_epoch_end(self):
-        self.network.eval()
+        # self.network.eval()
+        self.net_w.eval()
+        self.net_phi_x.eval()
+        self.net_phi_y.eval()
         inputs, forcing = self.dataset[0]
         u, v, p, u_x_gp, v_y_gp = self.do_query(inputs, forcing)
 
@@ -247,13 +407,9 @@ class Elastic_FSDT(DiffNet2DFEM):
             self.plot_contours(u, v, p, u_x_gp, v_y_gp)
 
     def do_query(self, inputs, forcing):
-        pred, inputs_tensor, forcing_tensor = self.forward((inputs.unsqueeze(0).type_as(next(self.network.parameters())), forcing.unsqueeze(0).type_as(next(self.network.parameters()))))
+        u, v, p, inputs_tensor, forcing_tensor = self.forward((inputs.unsqueeze(0).type_as(next(self.net_w.parameters())), forcing.unsqueeze(0).type_as(next(self.net_w.parameters()))))
 
         f = forcing_tensor # renaming variable
-
-        u = pred[:,0:1,:,:]
-        v = pred[:,1:2,:,:]
-        p = pred[:,2:3,:,:]
 
         # extract diffusivity and boundary conditions here
         x = inputs_tensor[:,0:1,:,:]
@@ -263,85 +419,91 @@ class Elastic_FSDT(DiffNet2DFEM):
         bc3 = inputs_tensor[:,4:5,:,:]
 
         # apply boundary conditions
-        u_bc = self.u_bc.unsqueeze(0).unsqueeze(0).type_as(pred)
-        v_bc = self.v_bc.unsqueeze(0).unsqueeze(0).type_as(pred)
-        p_bc = self.p_bc.unsqueeze(0).unsqueeze(0).type_as(pred)
-        # u = torch.where(bc1>=0.05, u*0.0, u)
-        # u = torch.where(bc2>=0.05, u*0.0 + 1.0, u)
+        u_bc = self.w_bc.unsqueeze(0).unsqueeze(0).type_as(u)
+        v_bc = self.phi_x_bc.unsqueeze(0).unsqueeze(0).type_as(u)
+        p_bc = self.phi_y_bc.unsqueeze(0).unsqueeze(0).type_as(u)
 
-        # v = torch.where(torch.logical_or((bc1>=0.5),(bc2>=0.5)), v*0.0, v)
-        # p = torch.where(bc3>=0.5, p*0.0, p)
-        u = torch.where(bc1>=0.5, u_bc, u)
+        u = torch.where(bc2>=0.5, u_bc, u)
         v = torch.where(bc2>=0.5, v_bc, v)
-        p = torch.where(bc3>=0.5, p_bc, p)
+        p = torch.where(bc2>=0.5, p_bc, p)
 
-        u_x = self.gauss_pt_evaluation_der_x(u)
-        v_y = self.gauss_pt_evaluation_der_y(v)
+        u_x_gp = self.gauss_pt_evaluation_der_x(u)
+        v_y_gp = self.gauss_pt_evaluation_der_y(v)
 
-        return u, v, p, u_x, v_y
+        return u, v, p, u_x_gp, v_y_gp
 
     def plot_contours(self, u, v, p, u_x_gp, v_y_gp):
         fig, axs = plt.subplots(3, 3, figsize=(4*3,2.4*3),
                             subplot_kw={'aspect': 'auto'}, squeeze=True)
 
-        for ax_row in axs:
-            for ax in ax_row:
-                ax.set_xticks([])
-                ax.set_yticks([])
-
+        for i in range(axs.shape[0]-1):
+            for j in range(axs.shape[1]):
+                axs[i,j].set_xticks([])
+                axs[i,j].set_yticks([])
+        
         div_gp = u_x_gp + v_y_gp
         div_elmwise = torch.sum(div_gp, 0)
         div_total = torch.sum(div_elmwise)
 
         interp_method = 'bilinear'
         im0 = axs[0,0].imshow(u,cmap='jet', origin='lower', interpolation=interp_method)
-        fig.colorbar(im0, ax=axs[0,0]); axs[0,0].set_title(r'$u_x$')
+        fig.colorbar(im0, ax=axs[0,0]); axs[0,0].set_title(r'$w$')
         im1 = axs[0,1].imshow(v,cmap='jet',origin='lower', interpolation=interp_method)
-        fig.colorbar(im1, ax=axs[0,1]); axs[0,1].set_title(r'$u_y$')
+        fig.colorbar(im1, ax=axs[0,1]); axs[0,1].set_title(r'$\phi_x$')
         im2 = axs[0,2].imshow(p,cmap='jet',origin='lower', interpolation=interp_method)
-        fig.colorbar(im2, ax=axs[0,2]); axs[0,2].set_title(r'$p$')
-        x = np.linspace(0, 1, u.shape[0])
-        y = np.linspace(0, 1, u.shape[1])
+        fig.colorbar(im2, ax=axs[0,2]); axs[0,2].set_title(r'$\phi_y$')
 
-        im = axs[1,0].imshow(u-self.u_exact,cmap='jet', origin='lower', interpolation=interp_method)
-        fig.colorbar(im, ax=axs[1,0]); axs[1,0].set_title(r'$(u_x - u_x^{exact})$')
-        im = axs[1,1].imshow(v-self.v_exact,cmap='jet',origin='lower', interpolation=interp_method)
-        fig.colorbar(im, ax=axs[1,1]); axs[1,1].set_title(r'$(u_y - u_y^{exact})$')
-        im = axs[1,2].imshow(p-self.p_exact,cmap='jet',origin='lower', interpolation=interp_method)
-        fig.colorbar(im, ax=axs[1,2]); axs[1,2].set_title(r'$(p - p^{exact})$')
+        im3 = axs[1,0].plot(u[int(self.domain_size/2),:])
+        # fig.colorbar(im3, ax=axs[1,0]); axs[1,0].set_title(r'$\int(\nabla\cdot u) d\Omega = $' + '{:.3e}'.format(div_total.item()))
+        im4 = axs[1,1].plot(u[:,int(self.domain_size/2)])
+        # fig.colorbar(im4, ax=axs[1,1]); axs[1,1].set_title(r'$\sqrt{u_x^2+u_y^2}$')
+        # x = np.linspace(0, 1, u.shape[0])
+        # y = np.linspace(0, 1, u.shape[1])
+        # xx , yy = np.meshgrid(x, y)
+        # im5 = axs[1,2].streamplot(xx, yy, u, v, color='k', cmap='jet'); axs[1,2].set_title("Streamlines")
 
-        im3 = axs[2,0].imshow(div_elmwise,cmap='jet',origin='lower', interpolation=interp_method)
-        fig.colorbar(im3, ax=axs[2,0]); axs[2,0].set_title(r'$\int(\nabla\cdot u) d\Omega = $' + '{:.3e}'.format(div_total.item()))
-        im4 = axs[2,1].imshow((u**2 + v**2)**0.5,cmap='jet',origin='lower', interpolation=interp_method)
-        fig.colorbar(im4, ax=axs[2,1]); axs[2,1].set_title(r'$\sqrt{u_x^2+u_y^2}$')
+        # mid_idx = int(self.domain_size/2)
+        # im = axs[2,0].plot(self.dataset.y[:,mid_idx], u[:,mid_idx],label='DiffNet')
+        # im = axs[2,0].plot(self.midline_Y,self.midline_U,label='Numerical')
+        # axs[2,0].set_xlabel('y'); axs[2,0].legend(); axs[2,0].set_title(r'$u_x @ x=0.5$')
+        # im = axs[2,1].plot(self.dataset.x[mid_idx,:], v[mid_idx,:],label='DiffNet')
+        # im = axs[2,1].plot(self.midline_X,self.midline_V,label='Numerical')
+        # axs[2,1].set_xlabel('x'); axs[2,1].legend(); axs[2,1].set_title(r'$u_y @ y=0.5$')
+        # im = axs[2,2].plot(self.dataset.x[-1,:], p[-1,:],label='DiffNet')
+        # im = axs[2,2].plot(self.midline_X,self.topline_P,label='Numerical')
+        # axs[2,2].set_xlabel('x'); axs[2,2].legend(); axs[2,2].set_title(r'$p @ y=1.0$')
 
-        xx , yy = np.meshgrid(x, y)
-        im5 = axs[2,2].streamplot(xx, yy, u, v, color='k', cmap='jet'); axs[2,2].set_title("Streamlines")
+        # fig.suptitle("Re = {:.1f}, N = {}, LR = {:.1e}".format(self.Re, self.domain_size, self.learning_rate), fontsize=12)
 
-        fig.suptitle("Re = {:.1f}, N = {}, LR = {:.1e}".format(self.Re, self.domain_size, self.learning_rate), fontsize=12)
-
-        plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
+        # plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
 
 def main():
-    domain_size = 16
-    dir_string = "stokes_mms"
-    max_epochs = 201
-    LR = 3e-4
-    plot_frequency=50
+    domain_size = 32
+    Re = 100.
+    dir_string = "Elastic_FSDT"
+    max_epochs = 250
+    plot_frequency = 10
+    LR = 4e-3
+    opt_switch_epochs = max_epochs
 
     x = np.linspace(0, 1, domain_size)
     y = np.linspace(0, 1, domain_size)
     xx , yy = np.meshgrid(x, y)
 
-    dataset = Elastic_FSDT_Dataset(domain_size=domain_size)
-    v1 = np.zeros_like(dataset.x) # np.sin(math.pi*xx)*np.cos(math.pi*yy)
-    v2 = np.zeros_like(dataset.x) # -np.cos(math.pi*xx)*np.sin(math.pi*yy)
-    p  = np.zeros_like(dataset.x) # np.sin(math.pi*xx)*np.sin(math.pi*yy)
-    u_tensor = np.expand_dims(np.array([v1,v2,p]),0)
-    print(u_tensor.shape)
-    network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
+    dataset = Elastic_FSDT_Dataset(domain_size=domain_size, Re=Re)
+    w = np.zeros_like(dataset.x)
+    phi_x = np.zeros_like(dataset.x)
+    phi_y  = np.zeros_like(dataset.x)
+    u_tensor = np.expand_dims(np.array([w,phi_x,phi_y]),0)
+    
+    # network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
+    net_w = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor[:,0:1,:,:]), requires_grad=True)])
+    net_phi_x = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor[:,1:2,:,:]), requires_grad=True)])
+    net_phi_y = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor[:,2:3,:,:]), requires_grad=True)])
+    network = (net_w, net_phi_x, net_phi_y)
+
     basecase = Elastic_FSDT(network, dataset, domain_size=domain_size, batch_size=1, fem_basis_deg=1, learning_rate=LR, plot_frequency=plot_frequency)
 
     # Initialize trainer
@@ -354,14 +516,18 @@ def main():
         dirpath=logger.log_dir, filename='{epoch}-{step}',
         mode='min', save_last=True)
 
-    trainer = Trainer(gpus=[0],callbacks=[early_stopping],
+    lbfgs_switch = OptimSwitchLBFGS(epochs=opt_switch_epochs)
+
+    trainer = Trainer(gpus=[0],callbacks=[lbfgs_switch],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
         max_epochs=max_epochs, deterministic=True, profiler="simple")
 
     # Training
     trainer.fit(basecase)
     # Save network
-    torch.save(basecase.network, os.path.join(logger.log_dir, 'network.pt'))
+    torch.save(basecase.net_w, os.path.join(logger.log_dir, 'net_w.pt'))
+    torch.save(basecase.net_phi_x, os.path.join(logger.log_dir, 'net_phi_x.pt'))
+    torch.save(basecase.net_phi_y, os.path.join(logger.log_dir, 'net_phi_y.pt'))
 
 
 if __name__ == '__main__':
