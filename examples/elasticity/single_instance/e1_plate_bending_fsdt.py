@@ -8,8 +8,6 @@ import numpy as np
 import scipy.io
 from scipy import ndimage
 import matplotlib
-# from skimage import io
-# matplotlib.use("pgf")
 matplotlib.rcParams.update({
     # 'font.family': 'serif',
     'font.size':8,
@@ -24,7 +22,6 @@ seed_everything(42)
 import DiffNet
 from DiffNet.DiffNetFEM import DiffNet2DFEM
 from torch.utils import data
-# from e1_stokes_base_resmin import Stokes2D
 
 from pytorch_lightning.callbacks.base import Callback
 
@@ -95,33 +92,16 @@ class Elastic_FSDT(DiffNet2DFEM):
         super(Elastic_FSDT, self).__init__(network[0], dataset, **kwargs)
         self.plot_frequency = kwargs.get('plot_frequency', 1)
 
-        # self.net_u = network[0]
-        # self.net_v = network[1]
-        # self.net_p = network[2]
         self.net_w = network[0]
         self.net_phi_x = network[1]
         self.net_phi_y = network[2]
 
         self.Re = self.dataset.Re
-        # self.viscosity = 1. / self.Re
         self.pspg_param = self.h**2 * self.Re / 12.
-
-        # ue, ve, pe = self.exact_solution(self.dataset.x, self.dataset.y)
-        # self.u_exact = torch.FloatTensor(ue)
-        # self.v_exact = torch.FloatTensor(ve)
-        # self.p_exact = torch.FloatTensor(pe)
 
         fx_gp, fy_gp = self.forcing(self.xgp, self.ygp)
         self.fx_gp = torch.FloatTensor(fx_gp)
         self.fy_gp = torch.FloatTensor(fy_gp)
-
-        # u_bc = np.zeros_like(self.dataset.x); u_bc[-1,:] = 1. - 16. * (self.dataset.x[-1,:]-0.5)**4
-        # v_bc = np.zeros_like(self.dataset.x)
-        # p_bc = np.zeros_like(self.dataset.x)
-
-        # self.u_bc = torch.FloatTensor(u_bc)
-        # self.v_bc = torch.FloatTensor(v_bc)
-        # self.p_bc = torch.FloatTensor(p_bc)
 
         ###########################################
         # Define and initialize boundary conditions
@@ -131,47 +111,12 @@ class Elastic_FSDT(DiffNet2DFEM):
         self.phi_y_bc = torch.FloatTensor(np.zeros_like(self.dataset.x))
         ########################################### 
 
-        # numerical = np.loadtxt('ns-ldc-numerical-results/midline_cuts_Re100_regularized_128x128.txt', delimiter=",", skiprows=1)
-        # self.midline_X = numerical[:,0]
-        # self.midline_Y = numerical[:,0]
-        # self.midline_U = numerical[:,1]
-        # self.midline_V = numerical[:,2]
-        # self.topline_P = numerical[:,3]
-
-    # def exact_solution(self, x, y):
-    #     print("exact_solution -- LDC class called")
-    #     u_exact = np.zeros_like(x)
-    #     v_exact = np.zeros_like(x)
-    #     p_exact = np.zeros_like(x)
-    #     return u_exact, v_exact, p_exact
-
     def forcing(self, x, y):
         print("forcing -- LDC class called")
         fx = np.ones_like(x)
         fy = np.ones_like(x)
         return fx, fy
 
-    # def calc_tau(self, h_tuple, adv_tuple, visco):
-    #     '''
-    #     values input to this function should be detached
-    #     from the computation graph
-    #     '''
-    #     hx, hy = h_tuple
-    #     u, v = adv_tuple
-
-    #     g = torch.tensor([2./hx, 2./hy])
-    #     G = torch.tensor([[4./hx**2, 0.], [0., 4./hy**2]])
-    #     Cinv = 36.
-    #     # assume regular grid
-    #     adv_part = G[0,0] * u**2 + G[1,1] * v**2
-    #     diffusion_part = Cinv* visco**2 * (G[0,0]**2 + G[1,1]**2)
-    #     # calc taum at GP
-    #     temp = torch.sqrt(adv_part + diffusion_part)
-    #     taum = 1. / temp
-    #     # calc tauc at GP
-    #     gg_inv = 1. / (g[0]**2 + g[1]**2)
-    #     tauc = temp * gg_inv
-    #     return taum, tauc
 
     def Q1_vector_assembly(self, Aglobal, Aloc_all):
         Aglobal[:,0, 0:-1, 0:-1] += Aloc_all[:,0, :, :]
@@ -181,7 +126,7 @@ class Elastic_FSDT(DiffNet2DFEM):
         return Aglobal
 
     def calc_residuals(self, pred, inputs_tensor, forcing_tensor):
-        # visco = self.viscosity
+
         hx = self.h
         hy = self.h
 
@@ -261,86 +206,6 @@ class Elastic_FSDT(DiffNet2DFEM):
         # rhs
         rhs_3a = N_values * q
 
-
-
-
-
-        # # variable values at GP
-        # u = self.gauss_pt_evaluation(w_pred)
-        # v = self.gauss_pt_evaluation(v_pred)
-        # p = self.gauss_pt_evaluation(p_pred)
-        # # 1st derivatives at GP
-        # p_x = self.gauss_pt_evaluation_der_x(p_pred)
-        # p_y = self.gauss_pt_evaluation_der_y(p_pred)
-        # u_x = self.gauss_pt_evaluation_der_x(w_pred)
-        # u_y = self.gauss_pt_evaluation_der_y(w_pred)
-        # v_x = self.gauss_pt_evaluation_der_x(v_pred)
-        # v_y = self.gauss_pt_evaluation_der_y(v_pred)
-        # # 2nd derivatives at GP
-        # u_xx = self.gauss_pt_evaluation_der2_x(u_pred)
-        # u_yy = self.gauss_pt_evaluation_der2_y(u_pred)
-        # v_xx = self.gauss_pt_evaluation_der2_x(v_pred)
-        # v_yy = self.gauss_pt_evaluation_der2_y(v_pred)
-        # # convection terms
-        # adv1 = u*u_x + v*u_y
-        # adv2 = u*v_x + v*v_y        
-        # # laplacian terms
-        # lap1 = u_xx + u_yy
-        # lap2 = v_xx + v_yy
-        # # divergence
-        # divergence = u_x + v_y
-        # # coarse scale strong residuals
-        # res1 = adv1 - visco*lap1 + p_x - f1
-        # res2 = adv2 - visco*lap2 + p_y - f2
-        # res3 = divergence
-        # taum, tauc = self.calc_tau((hx,hy), (u.clone().detach(),v.clone().detach()), visco)
-
-        # CALCULATION STARTS
-        # lhs
-        # W_U1x = N_values*u_x
-        # W_U2y = N_values*v_y
-        # Wx_U1x = dN_x_values*u_x
-        # Wy_U1y = dN_y_values*u_y
-        # Wx_U2x = dN_x_values*v_x
-        # Wy_U2y = dN_y_values*v_y
-        # Wx_P = dN_x_values*p
-        # Wy_P = dN_y_values*p
-        # Wx_Px = dN_x_values*p_x
-        # Wy_Py = dN_y_values*p_y
-        # W_Adv1 = N_values*adv1
-        # W_Adv2 = N_values*adv2
-        # W_Div = N_values*divergence
-        # Wx_Div = dN_x_values*divergence
-        # Wy_Div = dN_y_values*divergence
-        # U_dot_gradW = u * dN_x_values + v * dN_y_values
-        # Res_dot_gradW = res1 * dN_x_values + res2 * dN_y_values
-        # Res_dot_gradU1 = res1 * u_x + res2 * u_y
-        # Res_dot_gradU2 = res1 * v_x + res2 * v_y
-        # # crossterm 1
-        # C1_1 = U_dot_gradW*res1
-        # C1_2 = U_dot_gradW*res2
-        # # crossterm 2
-        # C2_1 = N_values*Res_dot_gradU1
-        # C2_2 = N_values*Res_dot_gradU2
-        # # Reynolds stress term
-        # Rey_1 = res1*Res_dot_gradW
-        # Rey_2 = res2*Res_dot_gradW
-        # # PSPG
-        # Wx_Res1 = dN_x_values*res1
-        # Wy_Res2 = dN_y_values*res2
-        # # rhs
-        # W_F1 = N_values*f1
-        # W_F2 = N_values*f2
-
-        # integrated values on lhs & rhs
-        # temp1 = W_Adv1 + visco*(Wx_U1x+Wy_U1y) - Wx_P - W_F1
-        # temp2 = W_Adv2 + visco*(Wx_U2x+Wy_U2y) - Wy_P - W_F2
-        # temp3 = W_U1x+W_U2y + self.pspg_param*(Wx_Px+Wy_Py)
-
-        # # integrated values on lhs & rhs
-        # temp1 = W_Adv1 + visco*(Wx_U1x+Wy_U1y) - Wx_P - W_F1 + taum*C1_1 - taum*C2_1 - taum**2*Rey_1 + tauc*Wx_Div
-        # temp2 = W_Adv2 + visco*(Wx_U2x+Wy_U2y) - Wy_P - W_F2 + taum*C1_2 - taum*C2_2 - taum**2*Rey_2 + tauc*Wy_Div
-        # temp3 = W_Div + taum*(Wx_Res1 + Wy_Res2)
         temp1 = lhs_3a - rhs_3a
         temp2 = lhs_3b
         temp3 = lhs_3c
@@ -364,7 +229,6 @@ class Elastic_FSDT(DiffNet2DFEM):
 
     def loss(self, pred, inputs_tensor, forcing_tensor):
         R1, R2, R3 = self.calc_residuals(pred, inputs_tensor, forcing_tensor)
-        # loss = torch.norm(R1, 'fro') + torch.norm(R2, 'fro') + torch.norm(R3, 'fro')
         return torch.norm(R1, 'fro'), torch.norm(R2, 'fro'), torch.norm(R3, 'fro')
 
     def forward(self, batch):
@@ -385,7 +249,6 @@ class Elastic_FSDT(DiffNet2DFEM):
 
     def configure_optimizers(self):
         lr = self.learning_rate
-        # opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
         opts = [torch.optim.Adam(self.net_w, lr=lr), torch.optim.Adam(self.net_phi_x, lr=lr), torch.optim.Adam(self.net_phi_y, lr=lr)]
         return opts, []
 
@@ -433,7 +296,7 @@ class Elastic_FSDT(DiffNet2DFEM):
         return u, v, p, u_x_gp, v_y_gp
 
     def plot_contours(self, u, v, p, u_x_gp, v_y_gp):
-        fig, axs = plt.subplots(3, 3, figsize=(4*3,2.4*3),
+        fig, axs = plt.subplots(2, 3, figsize=(4*3,2.4*3),
                             subplot_kw={'aspect': 'auto'}, squeeze=True)
 
         for i in range(axs.shape[0]-1):
@@ -454,35 +317,17 @@ class Elastic_FSDT(DiffNet2DFEM):
         fig.colorbar(im2, ax=axs[0,2]); axs[0,2].set_title(r'$\phi_y$')
 
         im3 = axs[1,0].plot(u[int(self.domain_size/2),:])
-        # fig.colorbar(im3, ax=axs[1,0]); axs[1,0].set_title(r'$\int(\nabla\cdot u) d\Omega = $' + '{:.3e}'.format(div_total.item()))
         im4 = axs[1,1].plot(u[:,int(self.domain_size/2)])
-        # fig.colorbar(im4, ax=axs[1,1]); axs[1,1].set_title(r'$\sqrt{u_x^2+u_y^2}$')
-        # x = np.linspace(0, 1, u.shape[0])
-        # y = np.linspace(0, 1, u.shape[1])
-        # xx , yy = np.meshgrid(x, y)
-        # im5 = axs[1,2].streamplot(xx, yy, u, v, color='k', cmap='jet'); axs[1,2].set_title("Streamlines")
 
-        # mid_idx = int(self.domain_size/2)
-        # im = axs[2,0].plot(self.dataset.y[:,mid_idx], u[:,mid_idx],label='DiffNet')
-        # im = axs[2,0].plot(self.midline_Y,self.midline_U,label='Numerical')
-        # axs[2,0].set_xlabel('y'); axs[2,0].legend(); axs[2,0].set_title(r'$u_x @ x=0.5$')
-        # im = axs[2,1].plot(self.dataset.x[mid_idx,:], v[mid_idx,:],label='DiffNet')
-        # im = axs[2,1].plot(self.midline_X,self.midline_V,label='Numerical')
-        # axs[2,1].set_xlabel('x'); axs[2,1].legend(); axs[2,1].set_title(r'$u_y @ y=0.5$')
-        # im = axs[2,2].plot(self.dataset.x[-1,:], p[-1,:],label='DiffNet')
-        # im = axs[2,2].plot(self.midline_X,self.topline_P,label='Numerical')
-        # axs[2,2].set_xlabel('x'); axs[2,2].legend(); axs[2,2].set_title(r'$p @ y=1.0$')
-
-        # fig.suptitle("Re = {:.1f}, N = {}, LR = {:.1e}".format(self.Re, self.domain_size, self.learning_rate), fontsize=12)
-
-        # plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
+        if self.current_epoch % 50 == 0:
+            plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
 
 def main():
     domain_size = 32
     Re = 100.
-    dir_string = "Elastic_FSDT"
+    dir_string = "Elastic_FSDT_" + str(domain_size)
     max_epochs = 250
     plot_frequency = 10
     LR = 4e-3
