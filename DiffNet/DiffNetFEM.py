@@ -5,7 +5,9 @@ from .base import PDE
 from .cuboid_mesh import CuboidMesh
 
 def gauss_pt_eval(tensor, N, nsd=2, stride=1):
-    if nsd == 2:
+    if nsd == 1:
+        conv_gp = nn.functional.conv1d
+    elif nsd == 2:
         conv_gp = nn.functional.conv2d
     elif nsd == 3:
         conv_gp = nn.functional.conv3d
@@ -37,12 +39,21 @@ class DiffNetFEM(PDE):
         self.ngp_total = ngp_total = self.ngp_1d**self.nsd
         self.gpx_1d, self.gpw_1d = self.gauss_guadrature_scheme(self.ngp_1d)
 
+        self.nelemX = nelemX = int((self.domain_sizeX - 1)/self.fem_basis_deg)
+        self.nelemY = nelemY = int((self.domain_sizeY - 1)/self.fem_basis_deg)
+        if self.nsd == 3:
+            self.nelemZ = nelemZ = int((self.domain_sizeZ - 1)/self.fem_basis_deg)
+        self.nelem = nelem = int((self.domain_size - 1)/self.fem_basis_deg) # for backward compatibility (uses the X dir value)
+        self.hx = self.domain_lengthX / self.nelemX
+        self.hy = self.domain_lengthY / self.nelemY
+        if self.nsd == 3:
+            self.hz = self.domain_lengthZ / self.nelemZ
+        self.h = self.domain_length / self.nelem # for backward compatibility (uses the X dir value)
+
         # Basis functions setup
         if self.fem_basis_deg == 1:
-            self.nelem = nelem = self.domain_size - 1
             self.nbf_1d = nbf_1d = 2
             self.nbf_total = nbf_total = self.nbf_1d**self.nsd
-            self.h = 1. / self.nelem
             
             self.bf_1d = lambda x: np.array([0.5*(1.-x), 0.5*(1.+x)])
             self.bf_1d_der = lambda x: np.array([0.5*(0.-1.), 0.5*(0.+1.)])
@@ -50,10 +61,8 @@ class DiffNetFEM(PDE):
 
         elif self.fem_basis_deg == 2:
             assert (self.domain_size- 1)%2 == 0
-            self.nelem = nelem = int((self.domain_size - 1)/2)
             self.nbf_1d = nbf_1d = 3
             self.nbf_total = nbf_total = self.nbf_1d**self.nsd
-            self.h = 1. / self.nelem
 
             self.bf_1d = lambda x: np.array([
                                         0.5 * x * (x-1.),
@@ -73,10 +82,8 @@ class DiffNetFEM(PDE):
         
         elif self.fem_basis_deg == 3:
             assert (self.domain_size- 1)%3 == 0
-            self.nelem = nelem = int((self.domain_size - 1)/3)
             self.nbf_1d = nbf_1d = 4
             self.nbf_total = nbf_total = self.nbf_1d**self.nsd
-            self.h = 1. / self.nelem
 
             self.bf_1d = lambda x: np.array([
                                         (-9. / 16.) * (x**3- x**2 - (1. / 9.) * x + (1. / 9.)),
@@ -115,6 +122,9 @@ class DiffNetFEM(PDE):
 
     def gauss_pt_evaluation(self, tensor, stride=1):
         return gauss_pt_eval(tensor, self.N_gp, nsd=self.nsd, stride=(self.nbf_1d-1))
+
+    def gauss_pt_evaluation_surf(self, tensor, stride=1):
+        return gauss_pt_eval(tensor, self.N_gp_surf, nsd=(self.nsd-1), stride=(self.nbf_1d-1))
 
     def gauss_pt_evaluation_der_x(self, tensor, stride=1):
         return gauss_pt_eval(tensor, self.dN_x_gp, nsd=self.nsd, stride=(self.nbf_1d-1))
@@ -162,6 +172,7 @@ class DiffNet2DFEM(DiffNetFEM):
         self.dN_y_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1))
         self.d2N_x_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1))
         self.d2N_y_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1))
+        self.d2N_xy_values = torch.ones((1,self.nbf_total,self.ngp_total,1,1))
         for jgp in range(self.ngp_1d):
             for igp in range(self.ngp_1d):
                 N_gp = torch.zeros((self.nbf_1d, self.nbf_1d))
@@ -177,16 +188,17 @@ class DiffNet2DFEM(DiffNetFEM):
                     for ibf in range(self.nbf_1d):
                         IBF = self.nbf_1d * jbf + ibf
                         N_gp[jbf,ibf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf]
-                        dN_x_gp[jbf,ibf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * (2 / self.h)
-                        dN_y_gp[jbf,ibf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * (2 / self.h)
-                        d2N_x_gp[jbf,ibf] = self.bf_1d_der2(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * (2 / self.h)**2
-                        d2N_y_gp[jbf,ibf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der2(self.gpx_1d[jgp])[jbf] * (2 / self.h)**2
-                        d2N_xy_gp[jbf,ibf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * (2 / self.h)**2
+                        dN_x_gp[jbf,ibf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * (2 / self.hx)
+                        dN_y_gp[jbf,ibf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * (2 / self.hy)
+                        d2N_x_gp[jbf,ibf] = self.bf_1d_der2(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * (2 / self.hx)**2
+                        d2N_y_gp[jbf,ibf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der2(self.gpx_1d[jgp])[jbf] * (2 / self.hy)**2
+                        d2N_xy_gp[jbf,ibf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * (2 / self.hx) * (2 / self.hy)
                         self.Nvalues[0,IBF,IGP,:,:] = N_gp[jbf,ibf]
                         self.dN_x_values[0,IBF,IGP,:,:] = dN_x_gp[jbf,ibf]
                         self.dN_y_values[0,IBF,IGP,:,:] = dN_y_gp[jbf,ibf]
                         self.d2N_x_values[0,IBF,IGP,:,:] = d2N_x_gp[jbf,ibf]
                         self.d2N_y_values[0,IBF,IGP,:,:] = d2N_y_gp[jbf,ibf]
+                        self.d2N_xy_values[0,IBF,IGP,:,:] = d2N_xy_gp[jbf,ibf]
                 self.N_gp.append(nn.Parameter(N_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
                 self.dN_x_gp.append(nn.Parameter(dN_x_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
                 self.dN_y_gp.append(nn.Parameter(dN_y_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
@@ -194,8 +206,8 @@ class DiffNet2DFEM(DiffNetFEM):
                 self.d2N_y_gp.append(nn.Parameter(d2N_y_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
                 self.d2N_xy_gp.append(nn.Parameter(d2N_xy_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
 
-        x = np.linspace(0,1,self.domain_size)
-        y = np.linspace(0,1,self.domain_size)
+        x = np.linspace(0,self.domain_lengthX,self.domain_sizeX)
+        y = np.linspace(0,self.domain_lengthY,self.domain_sizeY)
         xx, yy = np.meshgrid(x,y)
         self.xx = torch.FloatTensor(xx)
         self.yy = torch.FloatTensor(yy)
@@ -208,6 +220,40 @@ class DiffNet2DFEM(DiffNetFEM):
                 IGP = self.ngp_1d * jgp + igp # tensor product id or the linear id of the gauss point
                 self.xiigp[0,IGP,:,:] = torch.ones_like(self.xiigp[0,IGP,:,:])*self.gpx_1d[igp]
                 self.etagp[0,IGP,:,:] = torch.ones_like(self.etagp[0,IGP,:,:])*self.gpx_1d[jgp]
+
+        # SURFACE BASES
+        self.gpw_surf = torch.zeros(self.ngp_1d)
+        self.N_gp_surf = nn.ParameterList()
+        self.dN_x_gp_surf = nn.ParameterList()
+        self.dN_y_gp_surf = nn.ParameterList()
+        self.Nvalues_surf = torch.ones((1,self.nbf_1d,self.ngp_1d,1))
+        self.dN_x_values_surf = torch.ones((1,self.nbf_1d,self.ngp_1d,1))
+        self.dN_y_values_surf = torch.ones((1,self.nbf_1d,self.ngp_1d,1))
+        for igp in range(self.ngp_1d):
+            s_N_gp = torch.zeros((self.nbf_1d))
+            s_dN_x_gp = torch.zeros((self.nbf_1d))
+            s_dN_y_gp = torch.zeros((self.nbf_1d))
+
+            IGP = igp # tensor product id or the linear id of the gauss point
+            self.gpw_surf[IGP] = self.gpw_1d[igp]
+            for ibf in range(self.nbf_1d):
+                IBF = ibf
+                s_N_gp   [ibf] = self.bf_1d(self.gpx_1d[igp])[ibf]
+                s_dN_x_gp[ibf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * (2 / self.hx)
+                s_dN_y_gp[ibf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * (2 / self.hy)
+                self.Nvalues_surf    [0,IBF,IGP,:] = s_N_gp   [ibf]
+                self.dN_x_values_surf[0,IBF,IGP,:] = s_dN_x_gp[ibf]
+                self.dN_y_values_surf[0,IBF,IGP,:] = s_dN_y_gp[ibf]
+            self.N_gp_surf.append(nn.Parameter(s_N_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
+            self.dN_x_gp_surf.append(nn.Parameter(s_dN_x_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
+            self.dN_y_gp_surf.append(nn.Parameter(s_dN_y_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
+        print("N_gp = ", self.N_gp)
+        print("N_gp_surf = ", self.N_gp_surf)
+        for i in range(4):
+            print("N_gp[{}] = \n".format(i), self.N_gp[i])
+        for i in range(2):
+            print("N_gp_surf[{}] = \n".format(i), self.N_gp_surf[i])
+        print("Nvalues_surf = \n", self.Nvalues_surf)
 
         # print("xgp = ", self.xgp)
         # print("ygp = ", self.ygp)
@@ -289,7 +335,7 @@ class DiffNet2DFEM(DiffNetFEM):
 
         gpw = self.gpw.type_as(u_sol)
         # DERIVE NECESSARY VALUES
-        trnsfrm_jac = (0.5*self.h)**2
+        trnsfrm_jac = (0.5*self.hx)*(0.5*self.hy)
         JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
 
         e2 = e_gp**2*JxW
@@ -310,7 +356,7 @@ class DiffNet2DFEM(DiffNetFEM):
         print("||u_sol||, ||uex|| = ", uL2, u_exL2)
         print("||e||_{{L2}} = ", eL2)
         # by taking vector norm
-        print("||e|| (vector-norm) = ", torch.norm(u_ex - u_sol, 'fro')/self.domain_size)
+        print("||e|| (vector-norm) = ", torch.norm(u_ex - u_sol, 'fro')/torch.sqrt(self.domain_sizeX*self.domain_sizeY))
 
 
 class DiffNet3DFEM(DiffNetFEM):
@@ -358,15 +404,15 @@ class DiffNet3DFEM(DiffNetFEM):
                             for ibf in range(self.nbf_1d):
                                 IBF = kbf * self.nbf_1d**2 + jbf * self.nbf_1d + ibf
                                 N_gp[kbf,jbf,ibf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf]
-                                dN_x_gp[kbf,jbf,ibf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf] * (2 / self.h)
-                                dN_y_gp[kbf,jbf,ibf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf] * (2 / self.h)
-                                dN_z_gp[kbf,jbf,ibf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d_der(self.gpx_1d[kgp])[kbf] * (2 / self.h)
-                                d2N_x_gp[ibf,jbf,kbf] = self.bf_1d_der2(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf] * (2 / self.h)**2
-                                d2N_y_gp[ibf,jbf,kbf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der2(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf] * (2 / self.h)**2
-                                d2N_z_gp[ibf,jbf,kbf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d_der2(self.gpx_1d[kgp])[kbf] * (2 / self.h)**2
-                                d2N_xy_gp[ibf,jbf,kbf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf] * (2 / self.h)**2
-                                d2N_yz_gp[ibf,jbf,kbf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * self.bf_1d_der(self.gpx_1d[kgp])[kbf] * (2 / self.h)**2
-                                d2N_zx_gp[ibf,jbf,kbf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d_der(self.gpx_1d[kgp])[kbf] * (2 / self.h)**2
+                                dN_x_gp[kbf,jbf,ibf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf] * (2 / self.hx)
+                                dN_y_gp[kbf,jbf,ibf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf] * (2 / self.hy)
+                                dN_z_gp[kbf,jbf,ibf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d_der(self.gpx_1d[kgp])[kbf] * (2 / self.hz)
+                                d2N_x_gp[ibf,jbf,kbf] = self.bf_1d_der2(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf] * (2 / self.hx)**2
+                                d2N_y_gp[ibf,jbf,kbf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der2(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf] * (2 / self.hy)**2
+                                d2N_z_gp[ibf,jbf,kbf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d_der2(self.gpx_1d[kgp])[kbf] * (2 / self.hz)**2
+                                d2N_xy_gp[ibf,jbf,kbf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * self.bf_1d(self.gpx_1d[kgp])[kbf] * (2 / self.hx) * (2 / self.hy)
+                                d2N_yz_gp[ibf,jbf,kbf] = self.bf_1d(self.gpx_1d[igp])[ibf] * self.bf_1d_der(self.gpx_1d[jgp])[jbf] * self.bf_1d_der(self.gpx_1d[kgp])[kbf] * (2 / self.hy) * (2 / self.hz)
+                                d2N_zx_gp[ibf,jbf,kbf] = self.bf_1d_der(self.gpx_1d[igp])[ibf] * self.bf_1d(self.gpx_1d[jgp])[jbf] * self.bf_1d_der(self.gpx_1d[kgp])[kbf] * (2 / self.hz) * (2 / self.hx)
                                 self.Nvalues[0,IBF,IGP,:,:,:] = N_gp[kbf,jbf,ibf]
                                 self.dN_x_values[0,IBF,IGP,:,:,:] = dN_x_gp[kbf,jbf,ibf]
                                 self.dN_y_values[0,IBF,IGP,:,:,:] = dN_y_gp[kbf,jbf,ibf]
@@ -386,9 +432,9 @@ class DiffNet3DFEM(DiffNetFEM):
                     self.d2N_yz_gp.append(nn.Parameter(d2N_yz_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
                     self.d2N_zx_gp.append(nn.Parameter(d2N_zx_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
 
-        x = np.linspace(0,1,self.domain_size)
-        y = np.linspace(0,1,self.domain_size)
-        z = np.linspace(0,1,self.domain_size)
+        x = np.linspace(0,self.domain_lengthX,self.domain_sizeX)
+        y = np.linspace(0,self.domain_lengthY,self.domain_sizeY)
+        z = np.linspace(0,self.domain_lengthZ,self.domain_sizeZ)
         # xx, yy, zz = np.meshgrid(x,y,z)
         xx, yy, zz = CuboidMesh.meshgrid_3d(x,y,z)
         self.xx = torch.FloatTensor(xx)
@@ -501,7 +547,7 @@ class DiffNet3DFEM(DiffNetFEM):
 
         gpw = self.gpw.type_as(u_sol)
         # DERIVE NECESSARY VALUES
-        trnsfrm_jac = (0.5*self.h)**3
+        trnsfrm_jac = (0.5*self.hx)*(0.5*self.hy)*(0.5*self.hz)
         JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
 
         e2 = e_gp**2*JxW
@@ -522,4 +568,4 @@ class DiffNet3DFEM(DiffNetFEM):
         print("||u_sol||, ||uex|| = ", uL2, u_exL2)
         print("||e||_{{L2}} = ", eL2)
         # by taking vector norm
-        print("||e|| (vector-norm) = ", torch.norm(u_ex - u_sol, 'fro')/(1.*self.domain_size)**1.5)
+        print("||e|| (vector-norm) = ", torch.norm(u_ex - u_sol, 'fro')/torch.sqrt(self.domain_sizeX*self.domain_sizeY*self.domain_sizeZ))

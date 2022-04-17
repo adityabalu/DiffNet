@@ -47,7 +47,7 @@ class OptimSwitchLBFGS(Callback):
                         ]
             trainer.optimizers = opts
 
-class NS_LDC_Dataset(data.Dataset):
+class NS_FPS_Dataset(data.Dataset):
     'PyTorch dataset for Stokes_MMS_Dataset'
     def __init__(self, domain_lengths=(1.,1.), domain_sizes=(32,32), Re=1):
         """
@@ -60,21 +60,33 @@ class NS_LDC_Dataset(data.Dataset):
         xx , yy = np.meshgrid(x, y)
         self.x = xx
         self.y = yy
+
+        # object
+        self.obj_ctr = [3., 3.]
+        self.left_btm_corner = np.array([2.5, 2.5])
+        self.rght_top_corner = np.array([3.5, 3.5])
+        self.obj_left_idx = int(self.left_btm_corner[0] * domain_sizes[0] / domain_lengths[0])
+        self.obj_rght_idx = int(self.rght_top_corner[0] * domain_sizes[0] / domain_lengths[0])
+        self.obj_bttm_idx = int(self.left_btm_corner[1] * domain_sizes[1] / domain_lengths[1])
+        self.obj_top__idx = int(self.rght_top_corner[1] * domain_sizes[1] / domain_lengths[1])
+
         # bc1 for fixed boundaries
         self.bc1 = np.zeros_like(xx)
         self.bc1[ 0, :] = 1.0
         self.bc1[-1, :] = 1.0
         self.bc1[ :, 0] = 1.0
-        self.bc1[ :,-1] = 1.0
+        # self.bc1[ :,-1] = 1.0
+        # self.bc1[self.obj_bttm_idx:self.obj_top__idx, self.obj_left_idx:self.obj_rght_idx] = 1.
 
         self.bc2 = np.zeros_like(xx)
         self.bc2[ 0, :] = 1.0
         self.bc2[-1, :] = 1.0
         self.bc2[ :, 0] = 1.0
-        self.bc2[ :,-1] = 1.0
+        # self.bc2[ :,-1] = 1.0
+        # self.bc2[self.obj_bttm_idx:self.obj_top__idx, self.obj_left_idx:self.obj_rght_idx] = 1.
 
         self.bc3 = np.zeros_like(xx)
-        self.bc3[0:1,0:1] = 1.0
+        self.bc3[:,-1] = 1.0
 
         self.Re = Re
         self.n_samples = 100
@@ -90,11 +102,14 @@ class NS_LDC_Dataset(data.Dataset):
         forcing = np.ones_like(self.x)*(1/self.Re)
         return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
 
-class NS_LDC(DiffNet2DFEM):
-    """docstring for NS_LDC"""
+class NS_FPS(DiffNet2DFEM):
+    """docstring for NS_FPS"""
     def __init__(self, network, dataset, **kwargs):
-        super(NS_LDC, self).__init__(network[0], dataset, **kwargs)
+        super(NS_FPS, self).__init__(network[0], dataset, **kwargs)
         self.plot_frequency = kwargs.get('plot_frequency', 1)
+
+        print("hx = ", self.hx, ", hy = ", self.hy)
+        print("nelmX = ", self.nelemX, ", nelmY = ", self.nelemY)
 
         self.net_u = network[0]
         self.net_v = network[1]
@@ -102,7 +117,7 @@ class NS_LDC(DiffNet2DFEM):
 
         self.Re = self.dataset.Re
         self.viscosity = 1. / self.Re
-        self.pspg_param = self.h**2 * self.Re / 12.
+        self.pspg_param = self.hx*self.hy * self.Re / 12.
 
         ue, ve, pe = self.exact_solution(self.dataset.x, self.dataset.y)
         self.u_exact = torch.FloatTensor(ue)
@@ -113,20 +128,23 @@ class NS_LDC(DiffNet2DFEM):
         self.fx_gp = torch.FloatTensor(fx_gp)
         self.fy_gp = torch.FloatTensor(fy_gp)
 
-        u_bc = np.zeros_like(self.dataset.x); u_bc[-1,:] = 1. - 16. * (self.dataset.x[-1,:]-0.5)**4
+        # u_bc = np.zeros_like(self.dataset.x); u_bc[:,0] = 1.; u_bc[0,:] = 1.; u_bc[-1,:] = 1.
+        u_bc = np.zeros_like(self.dataset.x); u_bc[:,0] = 1. - (2.*self.dataset.y[:,0] / self.domain_lengthY - 1.)**2; u_bc[0,:] = 0.; u_bc[-1,:] = 0.
+        u_bc[self.dataset.obj_bttm_idx:self.dataset.obj_top__idx, self.dataset.obj_left_idx:self.dataset.obj_rght_idx] = 0.
         v_bc = np.zeros_like(self.dataset.x)
+        v_bc[self.dataset.obj_bttm_idx:self.dataset.obj_top__idx, self.dataset.obj_left_idx:self.dataset.obj_rght_idx] = 0.
         p_bc = np.zeros_like(self.dataset.x)
 
         self.u_bc = torch.FloatTensor(u_bc)
         self.v_bc = torch.FloatTensor(v_bc)
         self.p_bc = torch.FloatTensor(p_bc)
 
-        numerical = np.loadtxt('ns-ldc-numerical-results/midline_cuts_Re100_regularized_128x128.txt', delimiter=",", skiprows=1)
-        self.midline_X = numerical[:,0]
-        self.midline_Y = numerical[:,0]
-        self.midline_U = numerical[:,1]
-        self.midline_V = numerical[:,2]
-        self.topline_P = numerical[:,3]
+        # numerical = np.loadtxt('ns-ldc-numerical-results/midline_cuts_Re100_regularized_128x128.txt', delimiter=",", skiprows=1)
+        # self.midline_X = numerical[:,0]
+        # self.midline_Y = numerical[:,0]
+        # self.midline_U = numerical[:,1]
+        # self.midline_V = numerical[:,2]
+        # self.topline_P = numerical[:,3]
 
     def exact_solution(self, x, y):
         print("exact_solution -- LDC class called")
@@ -170,10 +188,110 @@ class NS_LDC(DiffNet2DFEM):
         Aglobal[:,0, 1:  , 1:  ] += Aloc_all[:,3, :, :]
         return Aglobal
 
+    def calc_residuals_stokes(self, pred, inputs_tensor, forcing_tensor):
+        visco = self.viscosity
+        hx = self.hx
+        hy = self.hy
+
+        N_values = self.Nvalues.type_as(pred[0])
+        dN_x_values = self.dN_x_values.type_as(pred[0])
+        dN_y_values = self.dN_y_values.type_as(pred[0])
+        gpw = self.gpw.type_as(pred[0])
+
+        f1 = self.fx_gp.type_as(pred[0])
+        f2 = self.fy_gp.type_as(pred[0])
+
+        u_bc = self.u_bc.unsqueeze(0).unsqueeze(0).type_as(pred[0])
+        v_bc = self.v_bc.unsqueeze(0).unsqueeze(0).type_as(pred[0])
+        p_bc = self.p_bc.unsqueeze(0).unsqueeze(0).type_as(pred[0])
+
+
+        f = forcing_tensor # renaming variable
+
+        u_pred = pred[0] #[:,0:1,:,:]
+        v_pred = pred[1] #[:,1:2,:,:]
+        p_pred = pred[2] #[:,2:3,:,:]
+
+        # extract diffusivity and boundary conditions here
+        x = inputs_tensor[:,0:1,:,:]
+        y = inputs_tensor[:,1:2,:,:]
+        bc1 = inputs_tensor[:,2:3,:,:]
+        bc2 = inputs_tensor[:,3:4,:,:]
+        bc3 = inputs_tensor[:,4:5,:,:]
+
+        # DERIVE NECESSARY VALUES
+        trnsfrm_jac = 1. #(0.5*hx)*(0.5*hy)
+        JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
+
+        # apply boundary conditions
+        u_pred = torch.where(bc1>=0.5, u_bc, u_pred)
+        v_pred = torch.where(bc2>=0.5, v_bc, v_pred)
+        p_pred = torch.where(bc3>=0.5, p_bc, p_pred)
+        # variable values at GP
+        u = self.gauss_pt_evaluation(u_pred)
+        v = self.gauss_pt_evaluation(v_pred)
+        p = self.gauss_pt_evaluation(p_pred)
+        # 1st derivatives at GP
+        p_x = self.gauss_pt_evaluation_der_x(p_pred)
+        p_y = self.gauss_pt_evaluation_der_y(p_pred)
+        u_x = self.gauss_pt_evaluation_der_x(u_pred)
+        u_y = self.gauss_pt_evaluation_der_y(u_pred)
+        v_x = self.gauss_pt_evaluation_der_x(v_pred)
+        v_y = self.gauss_pt_evaluation_der_y(v_pred)
+        # 2nd derivatives at GP
+        # u_xx = self.gauss_pt_evaluation_der2_x(u_pred)
+        # u_yy = self.gauss_pt_evaluation_der2_y(u_pred)
+        # v_xx = self.gauss_pt_evaluation_der2_x(v_pred)
+        # v_yy = self.gauss_pt_evaluation_der2_y(v_pred)
+        # taum, tauc = self.calc_tau((hx,hy), (u.clone().detach(),v.clone().detach()), visco)
+
+        # CALCULATION STARTS
+        # lhs
+        W_U1x = N_values*u_x
+        W_U2y = N_values*v_y
+        Wx_U1x = dN_x_values*u_x
+        Wy_U1y = dN_y_values*u_y
+        Wx_U2x = dN_x_values*v_x
+        Wy_U2y = dN_y_values*v_y
+        Wx_P = dN_x_values*p
+        Wy_P = dN_y_values*p
+        Wx_Px = dN_x_values*p_x
+        Wy_Py = dN_y_values*p_y
+        # rhs
+        W_F1 = N_values*f1
+        W_F2 = N_values*f2
+
+        # integrated values on lhs & rhs
+        temp1 = visco*(Wx_U1x+Wy_U1y) - Wx_P # - W_F1
+        temp2 = visco*(Wx_U2x+Wy_U2y) - Wy_P # - W_F2
+        temp3 = W_U1x+W_U2y + self.pspg_param*(Wx_Px+Wy_Py)
+
+        # # integrated values on lhs & rhs
+        # temp1 = W_Adv1 + visco*(Wx_U1x+Wy_U1y) - Wx_P - W_F1 + taum*C1_1 - taum*C2_1 - taum**2*Rey_1 + tauc*Wx_Div
+        # temp2 = W_Adv2 + visco*(Wx_U2x+Wy_U2y) - Wy_P - W_F2 + taum*C1_2 - taum*C2_2 - taum**2*Rey_2 + tauc*Wy_Div
+        # temp3 = W_Div + taum*(Wx_Res1 + Wy_Res2)
+
+        # unassembled residual
+        R_split_1 = torch.sum(temp1*JxW, 2) # sum across all GP
+        R_split_2 = torch.sum(temp2*JxW, 2) # sum across all GP
+        R_split_3 = torch.sum(temp3*JxW, 2) # sum across all GP
+
+        # assembly
+        R1 = torch.zeros_like(u_pred); R1 = self.Q1_vector_assembly(R1, R_split_1)
+        R2 = torch.zeros_like(u_pred); R2 = self.Q1_vector_assembly(R2, R_split_2)
+        R3 = torch.zeros_like(u_pred); R3 = self.Q1_vector_assembly(R3, R_split_3)
+
+        # add boundary conditions to R <---- this step is very important
+        R1 = torch.where(bc1>=0.5, u_bc, R1)
+        R2 = torch.where(bc2>=0.5, v_bc, R2)
+        R3 = torch.where(bc3>=0.5, p_bc, R3)
+
+        return R1, R2, R3
+
     def calc_residuals(self, pred, inputs_tensor, forcing_tensor):
         visco = self.viscosity
-        hx = self.h
-        hy = self.h
+        hx = self.hx
+        hy = self.hy
 
         N_values = self.Nvalues.type_as(pred[0])
         dN_x_values = self.dN_x_values.type_as(pred[0])
@@ -304,8 +422,10 @@ class NS_LDC(DiffNet2DFEM):
         return R1, R2, R3
 
     def loss(self, pred, inputs_tensor, forcing_tensor):
-        R1, R2, R3 = self.calc_residuals(pred, inputs_tensor, forcing_tensor)
+        # R1, R2, R3 = self.calc_residuals(pred, inputs_tensor, forcing_tensor)
+        R1, R2, R3 = self.calc_residuals_stokes(pred, inputs_tensor, forcing_tensor)
         # loss = torch.norm(R1, 'fro') + torch.norm(R2, 'fro') + torch.norm(R3, 'fro')
+        # return torch.norm(R1+R2+R2, 'fro')
         return torch.norm(R1, 'fro'), torch.norm(R2, 'fro'), torch.norm(R3, 'fro')
 
     def forward(self, batch):
@@ -315,10 +435,12 @@ class NS_LDC(DiffNet2DFEM):
     def training_step(self, batch, batch_idx, optimizer_idx):
         u, v, p, inputs_tensor, forcing_tensor = self.forward(batch)
         loss_vals = self.loss((u, v, p), inputs_tensor, forcing_tensor)
+        # self.log('loss_u', loss_vals.item())
         self.log('loss_u', loss_vals[0].item())
         self.log('loss_v', loss_vals[1].item())
         self.log('loss_p', loss_vals[2].item())
         return {"loss": loss_vals[optimizer_idx]}
+        # return {"loss": loss_vals}
 
     def training_step_end(self, training_step_outputs):
         loss = training_step_outputs["loss"]
@@ -394,72 +516,79 @@ class NS_LDC(DiffNet2DFEM):
         im2 = axs[0,2].imshow(p,cmap='jet',origin='lower', interpolation=interp_method)
         fig.colorbar(im2, ax=axs[0,2]); axs[0,2].set_title(r'$p$')
 
-        im3 = axs[1,0].imshow(div_elmwise,cmap='jet',origin='lower', interpolation=interp_method)
-        fig.colorbar(im3, ax=axs[1,0]); axs[1,0].set_title(r'$\int(\nabla\cdot u) d\Omega = $' + '{:.3e}'.format(div_total.item()))
-        im4 = axs[1,1].imshow((u**2 + v**2)**0.5,cmap='jet',origin='lower', interpolation=interp_method)
-        fig.colorbar(im4, ax=axs[1,1]); axs[1,1].set_title(r'$\sqrt{u_x^2+u_y^2}$')
-        x = np.linspace(0, 1, self.domain_sizeX)
-        y = np.linspace(0, 1, self.domain_sizeY)
-        xx , yy = np.meshgrid(x, y)
-        im5 = axs[1,2].streamplot(xx, yy, u, v, color='k', cmap='jet'); axs[1,2].set_title("Streamlines")
+        # im3 = axs[1,0].imshow(div_elmwise,cmap='jet',origin='lower', interpolation=interp_method)
+        # fig.colorbar(im3, ax=axs[1,0]); axs[1,0].set_title(r'$\int(\nabla\cdot u) d\Omega = $' + '{:.3e}'.format(div_total.item()))
+        # im4 = axs[1,1].imshow((u**2 + v**2)**0.5,cmap='jet',origin='lower', interpolation=interp_method)
+        # fig.colorbar(im4, ax=axs[1,1]); axs[1,1].set_title(r'$\sqrt{u_x^2+u_y^2}$')
+        # x = np.linspace(0, 1, u.shape[0])
+        # y = np.linspace(0, 1, u.shape[1])
+        # xx , yy = np.meshgrid(x, y)
+        # im5 = axs[1,2].streamplot(xx, yy, u, v, color='k', cmap='jet'); axs[1,2].set_title("Streamlines")
 
         mid_idxX = int(self.domain_sizeX/2)
         mid_idxY = int(self.domain_sizeY/2)
-        im = axs[2,0].plot(self.dataset.y[:,mid_idxX], u[:,mid_idxX],label='DiffNet')
-        im = axs[2,0].plot(self.midline_Y,self.midline_U,label='Numerical')
-        axs[2,0].set_xlabel('y'); axs[2,0].legend(); axs[2,0].set_title(r'$u_x @ x=0.5$')
-        im = axs[2,1].plot(self.dataset.x[mid_idxY,:], v[mid_idxY,:],label='DiffNet')
-        im = axs[2,1].plot(self.midline_X,self.midline_V,label='Numerical')
-        axs[2,1].set_xlabel('x'); axs[2,1].legend(); axs[2,1].set_title(r'$u_y @ y=0.5$')
-        im = axs[2,2].plot(self.dataset.x[-1,:], p[-1,:],label='DiffNet')
-        im = axs[2,2].plot(self.midline_X,self.topline_P,label='Numerical')
-        axs[2,2].set_xlabel('x'); axs[2,2].legend(); axs[2,2].set_title(r'$p @ y=1.0$')
+        im = axs[2,0].plot(self.dataset.y[:,0], u[:,0],label='u_inlet')
+        im = axs[2,1].plot(self.dataset.x[mid_idxY,:], p[mid_idxY,:],label='p_mid')
+        # mid_idx = int(self.domain_size/2)
+        # im = axs[2,0].plot(self.dataset.y[:,mid_idx], u[:,mid_idx],label='DiffNet')
+        # im = axs[2,0].plot(self.midline_Y,self.midline_U,label='Numerical')
+        # axs[2,0].set_xlabel('y'); axs[2,0].legend(); axs[2,0].set_title(r'$u_x @ x=0.5$')
+        # im = axs[2,1].plot(self.dataset.x[mid_idx,:], v[mid_idx,:],label='DiffNet')
+        # im = axs[2,1].plot(self.midline_X,self.midline_V,label='Numerical')
+        # axs[2,1].set_xlabel('x'); axs[2,1].legend(); axs[2,1].set_title(r'$u_y @ y=0.5$')
+        # im = axs[2,2].plot(self.dataset.x[-1,:], p[-1,:],label='DiffNet')
+        # im = axs[2,2].plot(self.midline_X,self.topline_P,label='Numerical')
+        # axs[2,2].set_xlabel('x'); axs[2,2].legend(); axs[2,2].set_title(r'$p @ y=1.0$')
 
-        fig.suptitle("Re = {:.1f}, Nx = {}, Ny = {}, LR = {:.1e}".format(self.Re, self.domain_sizeX, self.domain_sizeY, self.learning_rate), fontsize=12)
+        fig.suptitle("Re = {:.1f}, N = {}, LR = {:.1e}".format(self.Re, self.domain_size, self.learning_rate), fontsize=12)
 
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
 
 def main():
-    lx = 1.
-    ly = 1.
-    Nx = 64
+    lx = 12.
+    ly = 6.
+    Nx = 128
     Ny = 64
-    domain_size = 64
-    Re = 200.
-    dir_string = "ns_ldc"
-    max_epochs = 1001
-    plot_frequency = 20
+    domain_size = 32
+    Re = 1.
+    dir_string = "ns_fps"
+    max_epochs = 50001
+    plot_frequency = 100
     LR = 5e-3
     opt_switch_epochs = max_epochs
     load_from_prev = False
-    load_version_id = 37
+    load_version_id = 25
 
-    x = np.linspace(0, 1, Nx)
-    y = np.linspace(0, 1, Ny)
+    x = np.linspace(0, lx, Nx)
+    y = np.linspace(0, ly, Ny)
     xx , yy = np.meshgrid(x, y)
 
-    dataset = NS_LDC_Dataset(domain_lengths=(lx,ly), domain_sizes=(Nx,Ny), Re=Re)
+    dataset = NS_FPS_Dataset(domain_lengths=(lx,ly), domain_sizes=(Nx,Ny), Re=Re)
+
     if load_from_prev:
         print("LOADING FROM PREVIOUS VERSION: ", load_version_id)
-        case_dir = './ns_ldc/version_'+str(load_version_id)
+        case_dir = './ns_fps/version_'+str(load_version_id)
         net_u = torch.load(os.path.join(case_dir, 'net_u.pt'))
         net_v = torch.load(os.path.join(case_dir, 'net_v.pt'))
-        net_p = torch.load(os.path.join(case_dir, 'net_p.pt'))
+        net_p = torch.load(os.path.join(case_dir, 'net_p.pt'))        
     else:
         print("INITIALIZING PARAMETERS TO ZERO")
         v1 = np.zeros_like(dataset.x)
         v2 = np.zeros_like(dataset.x)
         p  = np.zeros_like(dataset.x)
         u_tensor = np.expand_dims(np.array([v1,v2,p]),0)
-
+        
         # network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
         net_u = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor[:,0:1,:,:]), requires_grad=True)])
         net_v = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor[:,1:2,:,:]), requires_grad=True)])
         net_p = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor[:,2:3,:,:]), requires_grad=True)])
+    # print("net_u = \n", net_u[0])
+    # print("net_v = \n", net_v[0])
+    # print("net_p = \n", net_p[0])
     network = (net_u, net_v, net_p)
-    basecase = NS_LDC(network, dataset, domain_lengths=(lx,ly), domain_sizes=(Nx,Ny), batch_size=1, fem_basis_deg=1, learning_rate=LR, plot_frequency=plot_frequency)
+    basecase = NS_FPS(network, dataset, domain_lengths=(lx,ly), domain_sizes=(Nx,Ny), batch_size=1, fem_basis_deg=1, learning_rate=LR, plot_frequency=plot_frequency)
 
     # Initialize trainer
     logger = pl.loggers.TensorBoardLogger('.', name=dir_string)
