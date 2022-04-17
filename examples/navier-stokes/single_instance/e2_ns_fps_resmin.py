@@ -76,14 +76,14 @@ class NS_FPS_Dataset(data.Dataset):
         self.bc1[-1, :] = 1.0
         self.bc1[ :, 0] = 1.0
         # self.bc1[ :,-1] = 1.0
-        # self.bc1[self.obj_bttm_idx:self.obj_top__idx, self.obj_left_idx:self.obj_rght_idx] = 1.
+        self.bc1[self.obj_bttm_idx:self.obj_top__idx, self.obj_left_idx:self.obj_rght_idx] = 1.
 
         self.bc2 = np.zeros_like(xx)
         self.bc2[ 0, :] = 1.0
         self.bc2[-1, :] = 1.0
         self.bc2[ :, 0] = 1.0
         # self.bc2[ :,-1] = 1.0
-        # self.bc2[self.obj_bttm_idx:self.obj_top__idx, self.obj_left_idx:self.obj_rght_idx] = 1.
+        self.bc2[self.obj_bttm_idx:self.obj_top__idx, self.obj_left_idx:self.obj_rght_idx] = 1.
 
         self.bc3 = np.zeros_like(xx)
         self.bc3[:,-1] = 1.0
