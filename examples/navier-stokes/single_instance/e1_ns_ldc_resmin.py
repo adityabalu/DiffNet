@@ -327,7 +327,7 @@ class NS_LDC(DiffNet2DFEM):
     def configure_optimizers(self):
         lr = self.learning_rate
         # opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
-        opts = [torch.optim.Adam(self.net_u, lr=lr), torch.optim.Adam(self.net_v, lr=lr), torch.optim.Adam(self.net_p, lr=lr)]
+        opts = [torch.optim.Adam(self.net_u.parameters(), lr=lr), torch.optim.Adam(self.net_v.parameters(), lr=lr), torch.optim.Adam(self.net_p.parameters(), lr=lr)]
         return opts, []
 
     def on_epoch_end(self):
