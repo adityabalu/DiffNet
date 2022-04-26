@@ -93,10 +93,10 @@ class LDC_Dataset(data.Dataset):
         forcing = np.ones_like(self.x)*(1/self.Re)
         return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
 
-class Stokes_LDC(Stokes_NS_Base_2D):
-    """docstring for Stokes_LDC"""
+class Stokes_NS_LDC(Stokes_NS_Base_2D):
+    """docstring for Stokes_NS_LDC"""
     def __init__(self, network, dataset, **kwargs):
-        super(Stokes_LDC, self).__init__(network, dataset, **kwargs)
+        super(Stokes_NS_LDC, self).__init__(network, dataset, **kwargs)
         self.plot_frequency = kwargs.get('plot_frequency', 1)
 
         self.net_u = network[0]
@@ -124,7 +124,10 @@ class Stokes_LDC(Stokes_NS_Base_2D):
         self.v_bc = torch.FloatTensor(v_bc)
         self.p_bc = torch.FloatTensor(p_bc)
 
-        numerical = np.loadtxt('ns-ldc-numerical-results/midline_cuts_Re1_regularized_128x128.txt', delimiter=",", skiprows=1)
+        if self.eq_type == 'stokes':
+            numerical = np.loadtxt('ns-ldc-numerical-results/midline_cuts_Re1_regularized_128x128.txt', delimiter=",", skiprows=1)
+        elif self.eq_type == 'ns':
+            numerical = np.loadtxt('ns-ldc-numerical-results/midline_cuts_Re100_regularized_128x128.txt', delimiter=",", skiprows=1)
         self.midline_X = numerical[:,0]
         self.midline_Y = numerical[:,0]
         self.midline_U = numerical[:,1]
@@ -178,17 +181,6 @@ class Stokes_LDC(Stokes_NS_Base_2D):
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
-
-class NS_LDC(Stokes_LDC):
-    """docstring for NS_LDC"""
-    def __init__(self, network, dataset, **kwargs):
-        super(NS_LDC, self).__init__(network, dataset, **kwargs)
-        numerical = np.loadtxt('ns-ldc-numerical-results/midline_cuts_Re100_regularized_128x128.txt', delimiter=",", skiprows=1)
-        self.midline_X = numerical[:,0]
-        self.midline_Y = numerical[:,0]
-        self.midline_U = numerical[:,1]
-        self.midline_V = numerical[:,2]
-        self.topline_P = numerical[:,3]
         
 
 def main():
@@ -238,10 +230,7 @@ def main():
             net_p = AE(in_channels=1, out_channels=1, dims=domain_size, n_downsample=3)
 
     network = (net_u, net_v, net_p)
-    if eq_type == 'stokes':
-        basecase = Stokes_LDC(network, dataset, eq_type=eq_type, mapping_type=mapping_type, domain_lengths=(lx,ly), domain_sizes=(Nx,Ny), batch_size=1, fem_basis_deg=1, learning_rate=LR, plot_frequency=plot_frequency)
-    elif eq_type == 'ns':
-        basecase = NS_LDC(network, dataset, eq_type=eq_type, mapping_type=mapping_type, domain_lengths=(lx,ly), domain_sizes=(Nx,Ny), batch_size=1, fem_basis_deg=1, learning_rate=LR, plot_frequency=plot_frequency)
+    basecase = Stokes_NS_LDC(network, dataset, eq_type=eq_type, mapping_type=mapping_type, domain_lengths=(lx,ly), domain_sizes=(Nx,Ny), batch_size=1, fem_basis_deg=1, learning_rate=LR, plot_frequency=plot_frequency)
 
     # Initialize trainer
     logger = pl.loggers.TensorBoardLogger('.', name=dir_string)
