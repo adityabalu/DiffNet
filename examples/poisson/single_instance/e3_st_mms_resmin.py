@@ -24,6 +24,7 @@ from DiffNet.networks.wgan import GoodNetwork
 from DiffNet.DiffNetFEM import DiffNet2DFEM
 # from DiffNet.datasets.single_instances.rectangles import RectangleManufactured
 from DiffNet.datasets.single_instances.rectangles import SpaceTimeRectangleManufactured
+from DiffNet.networks.autoencoders import AE
 
 def stiffness_vs_values_conv(tensor, N, nsd=2, stride=1):
     if nsd == 2:
@@ -40,6 +41,7 @@ class SpaceTimeHeat(DiffNet2DFEM):
     """docstring for SpaceTimeHeat"""
     def __init__(self, network, dataset, **kwargs):
         super(SpaceTimeHeat, self).__init__(network, dataset, **kwargs)
+        self.mapping_type = kwargs.get('mapping_type', 'no_network')
 
         self.diffusivity = self.dataset.diffusivity
         self.u_exact = self.exact_solution(self.xx.numpy(),self.yy.numpy())
@@ -157,7 +159,11 @@ class SpaceTimeHeat(DiffNet2DFEM):
 
     def forward(self, batch):
         inputs_tensor, forcing_tensor = batch
-        return self.network[0], inputs_tensor, forcing_tensor
+        if self.mapping_type == 'no_network':
+            return self.network[0], inputs_tensor, forcing_tensor
+        elif self.mapping_type == 'network':
+            nu = inputs_tensor[:,0:1,:,:]
+            return self.network(nu), inputs_tensor, forcing_tensor
 
     # def configure_optimizers(self):
     #     """
@@ -199,8 +205,8 @@ class SpaceTimeHeat(DiffNet2DFEM):
 
     def configure_optimizers(self):
         lr = self.learning_rate
-        opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
-        # opts = [torch.optim.Adam(self.network, lr=lr)]
+        opts = [torch.optim.LBFGS(self.network.parameters(), lr=1.0, max_iter=5)]
+        # opts = [torch.optim.Adam(self.network.parameters(), lr=lr)]
         # opts = [torch.optim.Adam(self.network, lr=lr), torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
         return opts, []
 
@@ -253,6 +259,7 @@ class SpaceTimeHeat(DiffNet2DFEM):
         im3 = axs[3].imshow(diff,cmap='jet') #, vmin=0.0, vmax=0.5)
         fig.colorbar(im3, ax=axs[3])
         ff = self.forcing(self.xgp, self.ygp)
+        fig.suptitle("Nx = {}, Ny = {}, LR = {:.1e}, mapping_type = {}".format(self.domain_sizeX, self.domain_sizeY, self.learning_rate, self.mapping_type), fontsize=8) 
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
@@ -261,14 +268,20 @@ def main():
     # u_tensor = np.random.randn(1,1,256,256)
 
     caseId = 0
+    LR=1e-4
     domain_size = 64
     dir_string = "spacetime-heat"
-    max_epochs = 15
+    max_epochs = 100
+    # mapping_type = 'network'
+    mapping_type = 'no_network'
     
     u_tensor = np.ones((1,1,domain_size,domain_size))
-    network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
+    if mapping_type == 'no_network':
+        network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
+    elif mapping_type == 'network':
+        network = AE(in_channels=1, out_channels=1, dims=domain_size, n_downsample=3)
     dataset = SpaceTimeRectangleManufactured(domain_size=domain_size)
-    basecase = SpaceTimeHeat(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=0.01)
+    basecase = SpaceTimeHeat(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=LR, mapping_type=mapping_type)
 
     # ------------------------
     # 1 INIT TRAINER

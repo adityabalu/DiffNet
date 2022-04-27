@@ -356,7 +356,7 @@ class DiffNet2DFEM(DiffNetFEM):
         print("||u_sol||, ||uex|| = ", uL2, u_exL2)
         print("||e||_{{L2}} = ", eL2)
         # by taking vector norm
-        print("||e|| (vector-norm) = ", torch.norm(u_ex - u_sol, 'fro')/torch.sqrt(self.domain_sizeX*self.domain_sizeY))
+        print("||e|| (vector-norm) = ", torch.norm(u_ex - u_sol, 'fro')/np.sqrt(self.domain_sizeX*self.domain_sizeY))
 
 
 class DiffNet3DFEM(DiffNetFEM):
@@ -568,4 +568,4 @@ class DiffNet3DFEM(DiffNetFEM):
         print("||u_sol||, ||uex|| = ", uL2, u_exL2)
         print("||e||_{{L2}} = ", eL2)
         # by taking vector norm
-        print("||e|| (vector-norm) = ", torch.norm(u_ex - u_sol, 'fro')/torch.sqrt(self.domain_sizeX*self.domain_sizeY*self.domain_sizeZ))
+        print("||e|| (vector-norm) = ", torch.norm(u_ex - u_sol, 'fro')/np.sqrt(self.domain_sizeX*self.domain_sizeY*self.domain_sizeZ))

@@ -214,7 +214,7 @@ class Poisson(DiffNet2DFEM):
         fig.colorbar(im0, ax=axs[0])
         im1 = axs[1].imshow(u,cmap='jet')
         fig.colorbar(im1, ax=axs[1]) 
-        fig.suptitle("Nx = {}, Ny = {}, LR = {:.1e}, loss_type = {}".format(self.domain_sizeX, self.domain_sizeY, self.learning_rate, self.loss_type), fontsize=8) 
+        fig.suptitle("({}, {}), LR = {:.1e}, mapping_type = {}, loss_type = {}".format(self.domain_sizeX, self.domain_sizeY, self.learning_rate, self.mapping_type, self.loss_type), fontsize=8) 
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
