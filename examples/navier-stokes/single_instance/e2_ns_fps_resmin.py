@@ -106,7 +106,9 @@ class NS_FPS(DiffNet2DFEM):
     """docstring for NS_FPS"""
     def __init__(self, network, dataset, **kwargs):
         super(NS_FPS, self).__init__(network[0], dataset, **kwargs)
-        self.plot_frequency = kwargs.get('plot_frequency', 1)
+        self.save_frequency = kwargs.get('save_frequency', 1)
+        self.eq_type = kwargs.get('eq_type', 'ns')
+        self.mapping_type = kwargs.get('mapping_type', 'no_network')
 
         print("hx = ", self.hx, ", hy = ", self.hy)
         print("nelmX = ", self.nelemX, ", nelmY = ", self.nelemY)
@@ -288,7 +290,7 @@ class NS_FPS(DiffNet2DFEM):
 
         return R1, R2, R3
 
-    def calc_residuals(self, pred, inputs_tensor, forcing_tensor):
+    def calc_residuals_ns(self, pred, inputs_tensor, forcing_tensor):
         visco = self.viscosity
         hx = self.hx
         hy = self.hy
@@ -352,8 +354,8 @@ class NS_FPS(DiffNet2DFEM):
         # divergence
         divergence = u_x + v_y
         # coarse scale strong residuals
-        res1 = adv1 - visco*lap1 + p_x - f1
-        res2 = adv2 - visco*lap2 + p_y - f2
+        res1 = adv1 + p_x - f1
+        res2 = adv2 + p_y - f2
         res3 = divergence
         taum, tauc = self.calc_tau((hx,hy), (u.clone().detach(),v.clone().detach()), visco)
 
@@ -422,8 +424,10 @@ class NS_FPS(DiffNet2DFEM):
         return R1, R2, R3
 
     def loss(self, pred, inputs_tensor, forcing_tensor):
-        # R1, R2, R3 = self.calc_residuals(pred, inputs_tensor, forcing_tensor)
-        R1, R2, R3 = self.calc_residuals_stokes(pred, inputs_tensor, forcing_tensor)
+        if self.eq_type == 'ns':
+            R1, R2, R3 = self.calc_residuals_ns(pred, inputs_tensor, forcing_tensor)
+        elif self.eq_type == 'stokes':
+            R1, R2, R3 = self.calc_residuals_stokes(pred, inputs_tensor, forcing_tensor)
         # loss = torch.norm(R1, 'fro') + torch.norm(R2, 'fro') + torch.norm(R3, 'fro')
         # return torch.norm(R1+R2+R2, 'fro')
         return torch.norm(R1, 'fro'), torch.norm(R2, 'fro'), torch.norm(R3, 'fro')
@@ -466,7 +470,14 @@ class NS_FPS(DiffNet2DFEM):
         u_x_gp = u_x_gp.squeeze().detach().cpu()
         v_y_gp = v_y_gp.squeeze().detach().cpu()
 
-        if self.current_epoch % self.plot_frequency == 0:
+        if self.current_epoch % self.save_frequency == 0:
+            with open(os.path.join(self.logger[0].log_dir, "save_info.txt"), "a") as myfile:
+                myfile.write("Last save @ epoch {}\n".format(self.current_epoch))
+            # Save network
+            torch.save(self.net_u, os.path.join(self.logger[0].log_dir, 'net_u.pt'))
+            torch.save(self.net_v, os.path.join(self.logger[0].log_dir, 'net_v.pt'))
+            torch.save(self.net_p, os.path.join(self.logger[0].log_dir, 'net_p.pt'))
+            # plot contours
             self.plot_contours(u, v, p, u_x_gp, v_y_gp)
 
     def do_query(self, inputs, forcing):
@@ -540,7 +551,7 @@ class NS_FPS(DiffNet2DFEM):
         # im = axs[2,2].plot(self.midline_X,self.topline_P,label='Numerical')
         # axs[2,2].set_xlabel('x'); axs[2,2].legend(); axs[2,2].set_title(r'$p @ y=1.0$')
 
-        fig.suptitle("Re = {:.1f}, N = {}, LR = {:.1e}".format(self.Re, self.domain_size, self.learning_rate), fontsize=12)
+        fig.suptitle("Re = {:.1f}, N = {}, LR = {:.1e}, epoch = {}, eq_type = {}, mapping_type = {}".format(self.Re, self.domain_size, self.learning_rate, self.current_epoch, self.eq_type, self.mapping_type), fontsize=8)
 
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
@@ -552,14 +563,15 @@ def main():
     Nx = 128
     Ny = 64
     domain_size = 32
-    Re = 1.
+    Re = 20.
     dir_string = "ns_fps"
     max_epochs = 50001
-    plot_frequency = 100
-    LR = 5e-3
+    save_frequency = 100
+    LR = 3e-4
     opt_switch_epochs = max_epochs
-    load_from_prev = False
-    load_version_id = 25
+    load_from_prev = True
+    load_version_id = 60
+    eq_type = 'ns'
 
     x = np.linspace(0, lx, Nx)
     y = np.linspace(0, ly, Ny)
@@ -572,7 +584,7 @@ def main():
         case_dir = './ns_fps/version_'+str(load_version_id)
         net_u = torch.load(os.path.join(case_dir, 'net_u.pt'))
         net_v = torch.load(os.path.join(case_dir, 'net_v.pt'))
-        net_p = torch.load(os.path.join(case_dir, 'net_p.pt'))        
+        net_p = torch.load(os.path.join(case_dir, 'net_p.pt'))
     else:
         print("INITIALIZING PARAMETERS TO ZERO")
         v1 = np.zeros_like(dataset.x)
@@ -588,7 +600,7 @@ def main():
     # print("net_v = \n", net_v[0])
     # print("net_p = \n", net_p[0])
     network = (net_u, net_v, net_p)
-    basecase = NS_FPS(network, dataset, domain_lengths=(lx,ly), domain_sizes=(Nx,Ny), batch_size=1, fem_basis_deg=1, learning_rate=LR, plot_frequency=plot_frequency)
+    basecase = NS_FPS(network, dataset, domain_lengths=(lx,ly), domain_sizes=(Nx,Ny), batch_size=1, fem_basis_deg=1, learning_rate=LR, save_frequency=save_frequency, eq_type=eq_type)
 
     # Initialize trainer
     logger = pl.loggers.TensorBoardLogger('.', name=dir_string)
