@@ -563,15 +563,21 @@ def main():
     Nx = 128
     Ny = 64
     domain_size = 32
-    Re = 20.
+    Re = 30.
     dir_string = "ns_fps"
     max_epochs = 50001
     save_frequency = 100
     LR = 3e-4
     opt_switch_epochs = max_epochs
     load_from_prev = True
-    load_version_id = 60
+    load_version_id = 69
     eq_type = 'ns'
+
+    enable_progress_bar = True
+    print("argv = ", sys.argv)
+    if len(sys.argv) > 1:
+        enable_progress_bar = bool(int(sys.argv[1]))
+        print("enable_progress_bar = ", enable_progress_bar)
 
     x = np.linspace(0, lx, Nx)
     y = np.linspace(0, ly, Ny)
@@ -606,7 +612,7 @@ def main():
     logger = pl.loggers.TensorBoardLogger('.', name=dir_string)
     csv_logger = pl.loggers.CSVLogger(logger.save_dir, name=logger.name, version=logger.version)
 
-    early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss',
+    early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss_u',
         min_delta=1e-8, patience=10, verbose=False, mode='max', strict=True)
     checkpoint = pl.callbacks.model_checkpoint.ModelCheckpoint(monitor='loss',
         dirpath=logger.log_dir, filename='{epoch}-{step}',
@@ -614,16 +620,18 @@ def main():
 
     lbfgs_switch = OptimSwitchLBFGS(epochs=opt_switch_epochs)
 
-    trainer = Trainer(gpus=[0],callbacks=[early_stopping,lbfgs_switch],
+    trainer = Trainer(gpus=[0],callbacks=[lbfgs_switch],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=max_epochs, deterministic=True, profiler="simple")
+        max_epochs=max_epochs, deterministic=True, profiler="simple", enable_progress_bar=enable_progress_bar)
+
+    print("logdir = ", logger.log_dir)
 
     # Training
     trainer.fit(basecase)
     # Save network
-    torch.save(basecase.net_u, os.path.join(logger.log_dir, 'net_u.pt'))
-    torch.save(basecase.net_v, os.path.join(logger.log_dir, 'net_v.pt'))
-    torch.save(basecase.net_p, os.path.join(logger.log_dir, 'net_p.pt'))
+    torch.save(basecase.net_u, os.path.join(logger.log_dir, 'net_u_detached.pt'))
+    torch.save(basecase.net_v, os.path.join(logger.log_dir, 'net_v_detached.pt'))
+    torch.save(basecase.net_p, os.path.join(logger.log_dir, 'net_p_detached.pt'))
 
 
 if __name__ == '__main__':
