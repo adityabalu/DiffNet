@@ -23,6 +23,7 @@ from DiffNet.networks.wgan import GoodNetwork
 from DiffNet.DiffNetFEM import DiffNet2DFEM
 from DiffNet.datasets.single_instances.klsum import Dataset
 from DiffNet.datasets.single_instances.rectangles import RectangleManufactured
+from DiffNet.networks.autoencoders import AE
 
 def stiffness_vs_values_conv(tensor, N, nsd=2, stride=1):
     if nsd == 2:
@@ -39,6 +40,7 @@ class Poisson(DiffNet2DFEM):
     """docstring for Poisson"""
     def __init__(self, network, dataset, **kwargs):
         super(Poisson, self).__init__(network, dataset, **kwargs)
+        self.mapping_type = kwargs.get('mapping_type', 'no_network')
 
         self.Kmatrices = nn.ParameterList()
         Kmx = np.array([[4.,-1.,-1.,-2.],[-1.,4.,-2.,-1],[-1.,-2.,4.,-1.],[-2.,-1.,-1.,4.]])/6.
@@ -79,15 +81,19 @@ class Poisson(DiffNet2DFEM):
 
     def forward(self, batch):
         inputs_tensor, forcing_tensor = batch
-        return self.network[0], inputs_tensor, forcing_tensor
+        if self.mapping_type == 'no_network':
+            return self.network[0], inputs_tensor, forcing_tensor
+        elif self.mapping_type == 'network':
+            nu = inputs_tensor[:,0:1,:,:]
+            return self.network(nu), inputs_tensor, forcing_tensor
 
     def configure_optimizers(self):
         """
         Configure optimizer for network parameters
         """
         lr = self.learning_rate
-        opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
-        # opts = [torch.optim.Adam(self.network, lr=lr)]
+        # opts = [torch.optim.LBFGS(self.network.parameters(), lr=1.0, max_iter=5)]
+        opts = [torch.optim.Adam(self.network.parameters(), lr=lr)]
         return opts, []
 
     def on_epoch_end(self):
@@ -125,8 +131,13 @@ class Poisson(DiffNet2DFEM):
 
 def main():
     domain_size = 32
-    u_tensor = np.ones((1,1,domain_size, domain_size))
-    network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
+    # mapping_type = 'network'
+    mapping_type = 'no_network'
+    if mapping_type == 'no_network':
+        u_tensor = np.ones((1,1,domain_size, domain_size))
+        network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
+    elif mapping_type == 'network':
+        network = AE(in_channels=1, out_channels=1, dims=domain_size, n_downsample=3)
     dataset = Dataset('example-coefficients-3.txt', domain_size=domain_size)
     # dataset = RectangleManufactured(domain_size=domain_size)
     basecase = Poisson(network, dataset, batch_size=1)

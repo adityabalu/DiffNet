@@ -41,6 +41,7 @@ class SpaceTimeHeat(DiffNet2DFEM):
     """docstring for SpaceTimeHeat"""
     def __init__(self, network, dataset, **kwargs):
         super(SpaceTimeHeat, self).__init__(network, dataset, **kwargs)
+        self.loss_type = kwargs.get('loss_type', 'residual')
         self.mapping_type = kwargs.get('mapping_type', 'no_network')
 
         self.diffusivity = self.dataset.diffusivity
@@ -80,7 +81,7 @@ class SpaceTimeHeat(DiffNet2DFEM):
         return sin(math.pi * x) * exp(-self.dataset.decay_rt*y) * (self.diffusivity * math.pi**2 - self.dataset.decay_rt)
         # return torch.zeros_like(x)
 
-    def loss(self, u, inputs_tensor, forcing_tensor):
+    def loss_resmin(self, u, inputs_tensor, forcing_tensor):
         N_values = self.Nvalues.type_as(u)
         dN_x_values = self.dN_x_values.type_as(u)
         dN_y_values = self.dN_y_values.type_as(u)
@@ -158,6 +159,36 @@ class SpaceTimeHeat(DiffNet2DFEM):
         loss = torch.sum(R**2)
         return loss
 
+    def loss_energy(self, u, inputs_tensor, forcing_tensor):
+        u0 = self.dataset.u0.unsqueeze(0).unsqueeze(0).type_as(u)
+        f_gp = self.f_gp.type_as(u)
+
+        f = forcing_tensor # renaming variable
+
+        # extract diffusivity and boundary conditions here
+        nu = inputs_tensor[:,0:1,:,:]
+        bc1 = inputs_tensor[:,1:2,:,:]
+        bc2 = inputs_tensor[:,2:3,:,:]
+
+        # apply boundary conditions
+        # u = torch.where(bc1>0.5,1.0+u*0.0,u)
+        # u = torch.where(bc2>0.5,u*0.0,u)
+        u = torch.where(bc1>0.5,u*0.0+u0,u)
+        u = torch.where(bc2>0.5,u*0.0,u)
+
+        nu_gp = self.gauss_pt_evaluation(nu)
+        f_gp = self.gauss_pt_evaluation(f)
+        u_gp = self.gauss_pt_evaluation(u)
+        u_x_gp = self.gauss_pt_evaluation_der_x(u)
+        u_y_gp = self.gauss_pt_evaluation_der_y(u)
+
+        transformation_jacobian = self.gpw.unsqueeze(-1).unsqueeze(-1).unsqueeze(0).type_as(nu_gp)
+        res_elmwise =  (u_gp*u_y_gp + nu_gp*u_x_gp**2 + self.tau*u_y_gp**2) - 2.*(u_gp+self.tau*u_y_gp)*f_gp
+        res_elmwise = torch.sum(transformation_jacobian*res_elmwise, 1)
+
+        loss = torch.mean(res_elmwise)
+        return loss
+
     def forward(self, batch):
         inputs_tensor, forcing_tensor = batch
         if self.mapping_type == 'no_network':
@@ -192,7 +223,10 @@ class SpaceTimeHeat(DiffNet2DFEM):
     def training_step(self, batch, batch_idx):
     # def training_step(self, batch, batch_idx):
         u, inputs_tensor, forcing_tensor = self.forward(batch)
-        loss_val = self.loss(u, inputs_tensor, forcing_tensor).mean()
+        if self.loss_type == 'residual':
+            loss_val = self.loss_resmin(u, inputs_tensor, forcing_tensor).mean()
+        elif self.loss_type == 'energy':
+            loss_val = self.loss_energy(u, inputs_tensor, forcing_tensor).mean()
         # loss_val = self.loss_resmin(u, inputs_tensor, forcing_tensor).mean()
         # loss_val = self.loss_resmin_mass(u, inputs_tensor, forcing_tensor).mean()
         # loss_val = self.loss_matvec(u, inputs_tensor, forcing_tensor).mean()
@@ -206,8 +240,8 @@ class SpaceTimeHeat(DiffNet2DFEM):
 
     def configure_optimizers(self):
         lr = self.learning_rate
-        opts = [torch.optim.LBFGS(self.network.parameters(), lr=1.0, max_iter=5)]
-        # opts = [torch.optim.Adam(self.network.parameters(), lr=lr)]
+        # opts = [torch.optim.LBFGS(self.network.parameters(), lr=1.0, max_iter=5)]
+        opts = [torch.optim.Adam(self.network.parameters(), lr=lr)]
         # opts = [torch.optim.Adam(self.network, lr=lr), torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
         return opts, []
 
@@ -260,7 +294,7 @@ class SpaceTimeHeat(DiffNet2DFEM):
         im3 = axs[3].imshow(diff,cmap='jet') #, vmin=0.0, vmax=0.5)
         fig.colorbar(im3, ax=axs[3])
         ff = self.forcing(self.xgp, self.ygp)
-        fig.suptitle("Nx = {}, Ny = {}, LR = {:.1e}, mapping_type = {}".format(self.domain_sizeX, self.domain_sizeY, self.learning_rate, self.mapping_type), fontsize=8) 
+        fig.suptitle("Nx = {}, Ny = {}, LR = {:.1e}, mapping_type = {}, loss_type = {}".format(self.domain_sizeX, self.domain_sizeY, self.learning_rate, self.mapping_type, self.loss_type), fontsize=8) 
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
@@ -273,6 +307,8 @@ def main():
     domain_size = 64
     dir_string = "spacetime-heat"
     max_epochs = 100
+    # loss_type = 'energy'
+    loss_type = 'residual'
     mapping_type = 'network'
     # mapping_type = 'no_network'
     
@@ -282,7 +318,7 @@ def main():
     elif mapping_type == 'network':
         network = AE(in_channels=1, out_channels=1, dims=domain_size, n_downsample=2)
     dataset = SpaceTimeRectangleManufactured(domain_size=domain_size)
-    basecase = SpaceTimeHeat(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=LR, mapping_type=mapping_type)
+    basecase = SpaceTimeHeat(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=LR, loss_type=loss_type, mapping_type=mapping_type)
 
     # ------------------------
     # 1 INIT TRAINER

@@ -24,6 +24,7 @@ from DiffNet.networks.wgan import GoodNetwork
 from DiffNet.DiffNetFEM import DiffNet2DFEM
 # from DiffNet.datasets.single_instances.rectangles import RectangleManufactured
 from DiffNet.datasets.single_instances.rectangles import AdvDiff2dRectangle
+from DiffNet.networks.autoencoders import AE
 
 def stiffness_vs_values_conv(tensor, N, nsd=2, stride=1):
     if nsd == 2:
@@ -40,6 +41,8 @@ class AdvDiff2d(DiffNet2DFEM):
     """docstring for AdvDiff2d"""
     def __init__(self, network, dataset, **kwargs):
         super(AdvDiff2d, self).__init__(network, dataset, **kwargs)
+        self.save_frequency = kwargs.get('save_frequency', 1)
+        self.mapping_type = kwargs.get('mapping_type', 'no_network')
 
         self.Pe = 1.0
         self.adv = np.array([np.cos(math.pi/6.), np.sin(math.pi/6.)])
@@ -122,6 +125,7 @@ class AdvDiff2d(DiffNet2DFEM):
         u_y_gp = self.gauss_pt_evaluation_der_y(u)
 
         # CALCULATION STARTS
+        nu_gp = self.gauss_pt_evaluation(nu)
         # lhs
         vux = N_values*u_x_gp*JxW
         vuy = N_values*u_y_gp*JxW
@@ -134,7 +138,7 @@ class AdvDiff2d(DiffNet2DFEM):
 
         # integrated values on lhs & rhs
         temp = (self.adv[0]*vux + self.adv[1]*vuy
-                + self.diffusivity*(vxux+vyuy)
+                + self.diffusivity*nu_gp*(vxux+vyuy)
                 + self.tau*self.adv[0]*self.adv[0]*vxux
                 + self.tau*self.adv[0]*self.adv[1]*vxuy
                 + self.tau*self.adv[1]*self.adv[0]*vyux
@@ -168,7 +172,11 @@ class AdvDiff2d(DiffNet2DFEM):
 
     def forward(self, batch):
         inputs_tensor, forcing_tensor = batch
-        return self.network[0], inputs_tensor, forcing_tensor
+        if self.mapping_type == 'no_network':
+            return self.network[0], inputs_tensor, forcing_tensor
+        elif self.mapping_type == 'network':
+            nu = inputs_tensor[:,0:1,:,:]
+            return self.network(nu), inputs_tensor, forcing_tensor
 
     # def configure_optimizers(self):
     #     """
@@ -211,7 +219,7 @@ class AdvDiff2d(DiffNet2DFEM):
     def configure_optimizers(self):
         lr = self.learning_rate
         # opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
-        opts = [torch.optim.Adam(self.network, lr=lr)]
+        opts = [torch.optim.Adam(self.network.parameters(), lr=lr)]
         # opts = [torch.optim.Adam(self.network, lr=lr), torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
         return opts, []
 
@@ -219,7 +227,13 @@ class AdvDiff2d(DiffNet2DFEM):
         self.network.eval()
         inputs, forcing = self.dataset[0]
         nu, f, u = self.do_query(inputs, forcing)
-        self.plot_contours(nu, f, u)
+
+        if self.current_epoch % self.save_frequency == 0:
+            with open(os.path.join(self.logger[0].log_dir, "save_info.txt"), "a") as myfile:
+                myfile.write("Last save @ epoch {}\n".format(self.current_epoch))
+            # Save network
+            torch.save(self.network, os.path.join(self.logger[0].log_dir, 'network.pt'))
+            self.plot_contours(nu, f, u)
 
     def do_query(self, inputs, forcing):
         u, inputs_tensor, forcing_tensor = self.forward((inputs.unsqueeze(0).type_as(next(self.network.parameters())), forcing.unsqueeze(0).type_as(next(self.network.parameters()))))
@@ -267,81 +281,34 @@ class AdvDiff2d(DiffNet2DFEM):
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
 
-    def calc_l2_err(self):
-        cn = lambda j,n: [j,j+1,j+n,(j+1)+n]
-        N = lambda x,y: (1./4.)*np.array([(1-x)*(1-y), (1+x)*(1-y), (1-x)*(1+y), (1+x)*(1+y)])
-        transform = lambda a,b,x: ((a+b)/2. + (b-a)/2.*x)
-
-        ngp = 4
-        gpx = np.array([-0.577350269189626, 0.577350269189626, -0.577350269189626, 0.577350269189626])
-        gpy = np.array([-0.577350269189626, -0.577350269189626, 0.577350269189626, 0.577350269189626])
-        gpw = np.ones(4)
-
-        nnodex = self.domain_size
-        nnodey = self.domain_size
-        nelmx = self.domain_size - 1
-        nelmy = self.domain_size - 1
-        hx = (1. / nelmx)
-        hy = (1. / nelmy)
-        J = (hx/2.)*(hy/2.)
-        print("J = ", J)
-
-        x = np.linspace(0,1,self.domain_size)
-        y = np.linspace(0,1,self.domain_size)
-        u_sol = self.u_curr.numpy()
-
-        usolnorm = 0.
-        uexnorm = 0.
-        l2_err = 0.
-        for j in range(nelmy):
-            for i in range(nelmx):
-                local_u = (u_sol[j:j+2,i:i+2].reshape(4,1)).squeeze()
-                # print("local_u = ", local_u)
-                for igp in range(ngp):
-                    basis = N(gpx[igp], gpy[igp])
-                    # print("basis = ", basis)
-                    xp = transform(x[i],x[i+1],gpx[igp])
-                    yp = transform(y[j],y[j+1],gpy[igp])
-
-                    u1 = np.dot(local_u, basis)
-                    u2 = self.exact_solution(xp,yp)
-
-                    # print("(xp,yp,uex,usol) = ", xp,yp,u2,u1)
-                    # print("u1 = ", u1)
-                    # print("u2 = ", u2)
-                    # print("gpw(igp) = ", gpw[igp])
-                    # print("J = ", J)
-                    l2_err += (u1 - u2)**2 * J
-                    usolnorm += u1**2*J
-                    uexnorm += u2**2*J
-
-        l2_err = np.sqrt(l2_err)
-        usolnorm = np.sqrt(usolnorm)
-        uexnorm = np.sqrt(uexnorm)
-
-        u_ex = self.u_exact.squeeze()
-
-
-        print("usol.shape =", u_sol.shape)
-        print("uex.shape =", u_ex.shape)
-        print("||u_sol||, ||uex|| = ", usolnorm, uexnorm)
-        print("||e||_{{L2}} = ", l2_err)
-        # by taking vector norm
-        print("||e|| (vector-norm) = ", np.linalg.norm(u_ex - u_sol, 'fro')/nnodex)
-
-
 def main():
     # u_tensor = np.random.randn(1,1,256,256)
 
     caseId = 0
     domain_size = 64
     dir_string = "adv-diff-2d"
-    max_epochs = 10
+    LR = 1e-2
+    max_epochs = 11
+    save_frequency = 5
+    load_from_prev = False
+    load_version_id = 60
+    # mapping_type = 'network'
+    mapping_type = 'no_network'
+
+    if load_from_prev:
+        print("LOADING FROM PREVIOUS VERSION: ", load_version_id)
+        case_dir = os.path.join('.', dir_string, 'version_'+str(load_version_id))
+        network = torch.load(os.path.join(case_dir, 'network.pt'))
+    else:
+        print("INITIALIZING PARAMETERS TO ZERO")
+        u_tensor = np.ones((1,1,domain_size,domain_size))
     
-    u_tensor = np.ones((1,1,domain_size,domain_size))
-    network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
+    if mapping_type == 'no_network':
+        network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
+    elif mapping_type == 'network':
+        network = AE(in_channels=1, out_channels=1, dims=domain_size, n_downsample=3)
     dataset = AdvDiff2dRectangle(domain_size=domain_size)
-    basecase = AdvDiff2d(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=0.01)
+    basecase = AdvDiff2d(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=LR, mapping_type=mapping_type, save_frequency=save_frequency)
 
     # ------------------------
     # 1 INIT TRAINER
@@ -370,8 +337,6 @@ def main():
     # 5 SAVE NETWORK
     # ------------------------
     torch.save(basecase.network, os.path.join(logger.log_dir, 'network.pt'))
-
-    basecase.calc_l2_err()
 
 
 if __name__ == '__main__':

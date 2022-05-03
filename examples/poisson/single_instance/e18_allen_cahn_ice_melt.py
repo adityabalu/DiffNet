@@ -24,6 +24,7 @@ from DiffNet.networks.wgan import GoodNetwork
 from DiffNet.DiffNetFEM import DiffNet2DFEM
 # from DiffNet.datasets.single_instances.rectangles import RectangleManufactured
 from DiffNet.datasets.single_instances.rectangles import AllenCahnIceMeltRectangle
+from DiffNet.networks.autoencoders import AE
 
 def stiffness_vs_values_conv(tensor, N, nsd=2, stride=1):
     if nsd == 2:
@@ -40,6 +41,7 @@ class AllenCahnIceMelt(DiffNet2DFEM):
     """docstring for AllenCahnIceMelt"""
     def __init__(self, network, dataset, **kwargs):
         super(AllenCahnIceMelt, self).__init__(network, dataset, **kwargs)
+        self.mapping_type = kwargs.get('mapping_type', 'no_network')
 
         self.ac_A  = self.dataset.ac_A
         self.ac_Cn = self.dataset.ac_Cn
@@ -150,7 +152,11 @@ class AllenCahnIceMelt(DiffNet2DFEM):
 
     def forward(self, batch):
         inputs_tensor, forcing_tensor = batch
-        return self.network[0], inputs_tensor, forcing_tensor
+        if self.mapping_type == 'no_network':
+            return self.network[0], inputs_tensor, forcing_tensor
+        elif self.mapping_type == 'network':
+            nu = inputs_tensor[:,0:1,:,:]
+            return self.network(nu), inputs_tensor, forcing_tensor
 
     # def configure_optimizers(self):
     #     """
@@ -198,7 +204,7 @@ class AllenCahnIceMelt(DiffNet2DFEM):
     def configure_optimizers(self):
         lr = self.learning_rate
         # opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
-        opts = [torch.optim.Adam(self.network, lr=lr)]
+        opts = [torch.optim.Adam(self.network.parameters(), lr=lr)]
         # opts = [torch.optim.Adam(self.network, lr=lr), torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
         return opts, []
 
@@ -323,13 +329,19 @@ def main():
     caseId = 0
     domain_size = 64
     dir_string = "allen-cahn-icemelt-2d"
+    LR = 1e-3
     max_epochs = 200
+    # mapping_type = 'network'
+    mapping_type = 'no_network'
     
     dataset = AllenCahnIceMeltRectangle(domain_size=domain_size)
     # u_tensor = np.ones((1,1,domain_size,domain_size))
     u_tensor = dataset.initial_guess
-    network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
-    basecase = AllenCahnIceMelt(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=0.01)
+    if mapping_type == 'no_network':
+        network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
+    elif mapping_type == 'network':
+        network = AE(in_channels=1, out_channels=1, dims=domain_size, n_downsample=3)
+    basecase = AllenCahnIceMelt(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=LR, mapping_type=mapping_type)
 
     # ------------------------
     # 1 INIT TRAINER
