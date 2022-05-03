@@ -113,3 +113,8 @@ examples/eiqonal/single_instance/curve_reconstruction/Sol2.png
 *.png
 
 *.mp4
+
+*.mat
+*.out
+*.err
+examples/poisson/parametric
