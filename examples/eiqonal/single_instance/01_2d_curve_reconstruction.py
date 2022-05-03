@@ -132,6 +132,13 @@ class Eiqonal(DiffNet2DFEM):
 
         self.network = network
 
+    def Q1_vector_assembly(self, Aglobal, Aloc_all):
+        Aglobal[:,0, 0:-1, 0:-1] += Aloc_all[:,0, :, :]
+        Aglobal[:,0, 0:-1, 1:  ] += Aloc_all[:,1, :, :]
+        Aglobal[:,0, 1:  , 0:-1] += Aloc_all[:,2, :, :]
+        Aglobal[:,0, 1:  , 1:  ] += Aloc_all[:,3, :, :]
+        return Aglobal
+
     def loss(self, u, inputs_tensor, forcing_tensor):
 
         f = forcing_tensor # renaming variable
@@ -168,28 +175,55 @@ class Eiqonal(DiffNet2DFEM):
         JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
 
         # First loss - eikonal eqn ie   grad(u) = 1
-        eikonal_lhs = (N_values * u_x_gp)**2 + (N_values * u_y_gp)**2
-        eikonal_rhs = N_values * 1.0 
-        res_elmwise1 = JxW * (eikonal_lhs - eikonal_rhs) # \nabla \phi - 1 = 0  JxW addresses discretization of domain
+        eikonal_lhs = (u_x_gp)**2 + (u_y_gp)**2
+        # eikonal_rhs = 1.0
+        eikonal_rhs = self.h**2
+        res_elmwise1 = JxW * N_values * (eikonal_lhs - eikonal_rhs) # \nabla \phi - 1 = 0  JxW addresses discretization of domain
 
         # First loss regularizer
         # res_elmwise1_regularizer = torch.exp(-100*torch.abs(u_gp))
 
         # Second loss - normals
-        normals = 1.0 - (u_x_gp*bc2_gp + u_y_gp*bc3_gp) 
+        # normals = 1.0 - (u_x_gp*bc2_gp + u_y_gp*bc3_gp) 
         # normals_lhs =  (N_values**2 * u_x_gp * bc2_gp) + (N_values**2 * u_y_gp * bc3_gp) # treat this as a directional eikonal??
         # normals_rhs = N_values * 1. 
         # normals = (u_x_gp - bc2_gp) + (u_y_gp - bc3_gp) # this makes more sense ie mse(pred_u_normals, normals)
-        res_elmwise2 = JxW * normals
+        # res_elmwise2 = JxW * normals
         # res_elmwise2 = JxW * (normals_lhs - normals_rhs)
 
         # Third loss - boundary reconstruction
         sdf_recon_loss = torch.sum(sdf_recon**2)
 
-        # res_elmwise2 = transformation_jacobian * (1.0 - u_x_gp*bc2_gp - u_y_gp*bc3_gp) 
-        # res_elmwise = torch.sum(res_elmwise1, 1) + 10*torch.sum(res_elmwise2, 1) + torch.sum(res_elmwise1_regularizer,1)# + sdf_boundary_recon
-        res_elmwise = torch.sum(res_elmwise1, 1) + torch.sum(res_elmwise2, 1)  + sdf_recon_loss # + torch.sum(res_elmwise1_regularizer, 1)
-        loss = torch.mean(res_elmwise) 
+        # Assemble 
+        R1 = torch.zeros_like(u); R1 = self.Q1_vector_assembly(R1, torch.sum(res_elmwise1, 1))
+        # R2 = torch.zeros_like(u); R2 = self.Q1_vector_assembly(R2, res_elmwise2)
+
+        # print('*'*10)
+        # print('u_x_gp = ', u_x_gp.shape)
+        # print('JxW = ', JxW.shape)
+        # print('N_values = ', N_values.shape)
+        # print('JxW * N_values = ', (JxW * N_values).shape)
+        # print('res_elmwise1 = ', res_elmwise1.shape)
+        # print('res_elmwise2 = ', res_elmwise2.shape)
+        # print('sum of res_elmwise1 = ', torch.sum(res_elmwise1, 1).shape)
+        # print('sum of res_elmwise2 = ', torch.sum(res_elmwise2, 1).shape)
+        # print('sdf_loss = ', sdf_recon_loss.shape)
+        # print('*'*10)
+        # exit()
+
+        # ********** From elastic single instance
+        # temp1 =  torch.Size([1, 4, 4, 31, 31])
+        # R_split_1 =  torch.Size([1, 4, 31, 31])
+        # R1 =  torch.Size([1, 1, 32, 32])
+        # **********
+        
+
+
+
+        # res_elmwise = torch.sum(res_elmwise1, 1) + torch.sum(res_elmwise2, 1)  + sdf_recon_loss # + torch.sum(res_elmwise1_regularizer, 1)
+        # res_elmwise = torch.norm(R1, 'fro') + torch.norm(R2, 'fro') + sdf_recon_loss
+        loss = torch.norm(R1, 'fro') + sdf_recon_loss
+        # loss = torch.mean(res_elmwise) 
         return loss
 
     def forward(self, batch):
@@ -260,10 +294,11 @@ class Eiqonal(DiffNet2DFEM):
         plt.close('all')
 
 def main():
+    img_size = 256
     u_tensor = np.ones((1,1,256,256))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor[:,0,:,:]), requires_grad=True)])
-    dataset = PCVox('images/apple-2.png', domain_size=256)
-    basecase = Eiqonal(network, dataset, batch_size=1, fem_basis_deg=1)
+    dataset = PCVox('images/bell-8.png', domain_size=256)
+    basecase = Eiqonal(network, dataset, batch_size=1, fem_basis_deg=1, domain_size=img_size, domain_length=img_size)
 
     # ------------------------
     # 1 INIT TRAINER
