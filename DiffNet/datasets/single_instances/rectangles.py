@@ -88,6 +88,7 @@ class SpaceTimeRectangleManufactured(data.Dataset):
         self.diffusivity = 0.1 # self.decay_rt/math.pi**2
         # self.forcing = np.sin(math.pi * xx) * np.exp(-yy) * (self.diffusivity*math.pi**2 - 1.) # np.zeros_like(xx)
         self.forcing = np.zeros_like(xx)
+        self.domain = xx
 
     def __len__(self):
         'Denotes the total number of samples'
