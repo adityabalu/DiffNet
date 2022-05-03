@@ -133,9 +133,10 @@ class SpaceTimeHeat(DiffNet2DFEM):
         R[:,0, 1:  , 0:-1] += R_split[:,2, :, :] #-vf[0,2,:,:]
         R[:,0, 1:  , 1:  ] += R_split[:,3, :, :] #-vf[0,3,:,:]
         # add boundary conditions to R <---- this step is very important
-        R = torch.where(bc1>0.5,R*0.0+u0,R)
         R = torch.where(bc2>0.5,R*0.0,R)
-
+        # R = torch.where(bc1>0.5,R*0.0+u0,R)
+        R = torch.masked_select(R, bc1<0.5)
+        # print(R, torch.sum(R**2))
         #  DEBUG RELATED STUFF
         # utest0 = torch.FloatTensor(torch.sin(math.pi*self.xx)*torch.cos(math.pi*self.yy))
         # print("xx = n", self.xx)
@@ -302,20 +303,20 @@ def main():
     # u_tensor = np.random.randn(1,1,256,256)
 
     caseId = 0
-    LR=1e-5
+    LR=3e-4
     domain_size = 64
     dir_string = "spacetime-heat"
     max_epochs = 100
     # loss_type = 'energy'
     loss_type = 'residual'
-    # mapping_type = 'network'
-    mapping_type = 'no_network'
+    mapping_type = 'network'
+    # mapping_type = 'no_network'
     
     u_tensor = np.ones((1,1,domain_size,domain_size))
     if mapping_type == 'no_network':
         network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
     elif mapping_type == 'network':
-        network = AE(in_channels=1, out_channels=1, dims=domain_size, n_downsample=3)
+        network = AE(in_channels=1, out_channels=1, dims=domain_size, n_downsample=2)
     dataset = SpaceTimeRectangleManufactured(domain_size=domain_size)
     basecase = SpaceTimeHeat(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=LR, loss_type=loss_type, mapping_type=mapping_type)
 
