@@ -162,7 +162,7 @@ class Eiqonal(DiffNet2DFEM):
         zeros = torch.zeros_like(u)
         sdf_recon = torch.where(bc1>0.5, u, zeros)
 
-        # u = torch.where(bc1>0.5, u*0.0, u) # this may give misleading gradient if we are trying to learn B.C.s
+        u = torch.where(bc1>0.5, u*0.0, u) # this may give misleading gradient if we are trying to learn B.C.s
 
         u_gp = self.gauss_pt_evaluation(u)
         bc2_gp = self.gauss_pt_evaluation(bc2)
@@ -173,12 +173,13 @@ class Eiqonal(DiffNet2DFEM):
         # bin width (reimann sum)
         trnsfrm_jac = (0.5*hx)*(0.5*hy)
         JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
+        N_values = self.Nvalues.type_as(f)
 
         # First loss - eikonal eqn ie   grad(u) = 1
-        eikonal_lhs = (u_x_gp)**2 + (u_y_gp)**2
+        eikonal_lhs = N_values*((u_x_gp)**2 + (u_y_gp)**2)
         # eikonal_rhs = 1.0
-        eikonal_rhs = self.h**2
-        res_elmwise1 = JxW * N_values * (eikonal_lhs - eikonal_rhs) # \nabla \phi - 1 = 0  JxW addresses discretization of domain
+        eikonal_rhs = N_values*1.0
+        res_elmwise1 = JxW * (eikonal_lhs - eikonal_rhs) # \nabla \phi - 1 = 0  JxW addresses discretization of domain
 
         # First loss regularizer
         # res_elmwise1_regularizer = torch.exp(-100*torch.abs(u_gp))
@@ -192,9 +193,12 @@ class Eiqonal(DiffNet2DFEM):
         # res_elmwise2 = JxW * (normals_lhs - normals_rhs)
 
         # Third loss - boundary reconstruction
-        sdf_recon_loss = torch.sum(sdf_recon**2)
+        # sdf_recon_loss = torch.sum(sdf_recon**2)
 
         # Assemble 
+        # print('***'*10)
+        # print(torch.sum(res_elmwise1, 1).shape)
+        # print('***'*10)
         R1 = torch.zeros_like(u); R1 = self.Q1_vector_assembly(R1, torch.sum(res_elmwise1, 1))
         # R2 = torch.zeros_like(u); R2 = self.Q1_vector_assembly(R2, res_elmwise2)
 
@@ -222,7 +226,7 @@ class Eiqonal(DiffNet2DFEM):
 
         # res_elmwise = torch.sum(res_elmwise1, 1) + torch.sum(res_elmwise2, 1)  + sdf_recon_loss # + torch.sum(res_elmwise1_regularizer, 1)
         # res_elmwise = torch.norm(R1, 'fro') + torch.norm(R2, 'fro') + sdf_recon_loss
-        loss = torch.norm(R1, 'fro') + sdf_recon_loss
+        loss = torch.norm(R1, 'fro')# + sdf_recon_loss
         # loss = torch.mean(res_elmwise) 
         return loss
 
@@ -239,7 +243,7 @@ class Eiqonal(DiffNet2DFEM):
         return opt
 
     def on_epoch_end(self):
-        fig, axs = plt.subplots(1, 5, figsize=(2*7,4),
+        fig, axs = plt.subplots(1, 4, figsize=(2*7,4),
                             subplot_kw={'aspect': 'auto'}, sharex=True, sharey=True, squeeze=True)
         for ax in axs:
             ax.set_xticks([])
@@ -263,11 +267,36 @@ class Eiqonal(DiffNet2DFEM):
         zeros = torch.zeros_like(u)
         sdf_boundary_residual = torch.where(bc1>0.5, u, zeros)
 
+        # GQ eval
+        u_x_gp = self.gauss_pt_evaluation_der_x(u.unsqueeze(0))
+        u_y_gp = self.gauss_pt_evaluation_der_y(u.unsqueeze(0))
+        # bin width (reimann sum)
+        gpw = self.gpw.type_as(f)
+        hx = self.h
+        hy = self.h
+        trnsfrm_jac = (0.5*hx)*(0.5*hy)
+        JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
+        N_values = self.Nvalues.type_as(f)
+
+        # Eikonal lhs
+        eikonal_lhs = N_values*((u_x_gp)**2 + (u_y_gp)**2)
+        # eikonal_rhs = 1.0
+        eikonal_rhs = N_values*1.0
+        res_elmwise1 = JxW * (eikonal_lhs - eikonal_rhs)
+        # Assemble to image representation
+        # print('***'*10)
+        # print('IN EPOCH END')
+        # print(torch.sum(res_elmwise1, 1).shape)
+        # print('***'*10)
+        # exit()
+        R1 = torch.zeros_like(u.unsqueeze(0)); R1 = self.Q1_vector_assembly(R1, torch.sum(res_elmwise1, 1))
+
         bc1 = bc1.squeeze().detach().cpu()
         bc2 = bc2.squeeze().detach().cpu()
         bc3 = bc3.squeeze().detach().cpu()
         u = u.squeeze().detach().cpu()
         sdf_boundary_residual = sdf_boundary_residual.squeeze().detach().cpu()
+        R1 = R1.squeeze().detach().cpu()
 
         im0 = axs[0].imshow(u,cmap='jet')
         fig.colorbar(im0, ax=axs[0])
@@ -277,17 +306,21 @@ class Eiqonal(DiffNet2DFEM):
         fig.colorbar(im1, ax=axs[1])
         axs[1].set_title('sdf res')
 
-        im2 = axs[2].imshow(bc1,cmap='jet')
-        fig.colorbar(im2, ax=axs[2])  
-        axs[2].set_title('source')
+        im2 = axs[2].imshow(R1, cmap='jet')
+        fig.colorbar(im2, ax=axs[2])
+        axs[2].set_title('Eikonal residual')
 
-        im3 = axs[3].imshow(bc2,cmap='jet')
-        fig.colorbar(im3, ax=axs[3])
-        axs[3].set_title('nrmls x')
+        im3 = axs[3].imshow(bc1,cmap='jet')
+        fig.colorbar(im3, ax=axs[3])  
+        axs[3].set_title('source')
 
-        im4 = axs[4].imshow(bc3,cmap='jet')
-        fig.colorbar(im4, ax=axs[4])  
-        axs[4].set_title('nrmls y')
+        # im4 = axs[4].imshow(bc2,cmap='jet')
+        # fig.colorbar(im4, ax=axs[4])
+        # axs[4].set_title('nrmls x')
+
+        # im5 = axs[5].imshow(bc3,cmap='jet')
+        # fig.colorbar(im5, ax=axs[5])  
+        # axs[5].set_title('nrmls y')
 
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
@@ -314,7 +347,7 @@ def main():
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=1500, deterministic=True, profiler="simple")
+        max_epochs=2500, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training
