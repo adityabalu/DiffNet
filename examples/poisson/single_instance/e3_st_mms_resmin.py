@@ -4,6 +4,7 @@ import json
 import math
 import torch
 import numpy as np
+import time
 
 import matplotlib
 # matplotlib.use("pgf")
@@ -43,6 +44,7 @@ class SpaceTimeHeat(DiffNet2DFEM):
         super(SpaceTimeHeat, self).__init__(network, dataset, **kwargs)
         self.loss_type = kwargs.get('loss_type', 'residual')
         self.mapping_type = kwargs.get('mapping_type', 'no_network')
+        self.initial_guess_epochs = kwargs.get('initial_guess_epochs', 0)
 
         self.diffusivity = self.dataset.diffusivity
         self.u_exact = self.exact_solution(self.xx.numpy(),self.yy.numpy())
@@ -80,6 +82,17 @@ class SpaceTimeHeat(DiffNet2DFEM):
         # return 2. * math.pi**2 * sin(math.pi * x) * sin(math.pi * y)
         return sin(math.pi * x) * exp(-self.dataset.decay_rt*y) * (self.diffusivity * math.pi**2 - self.dataset.decay_rt)
         # return torch.zeros_like(x)
+
+    def loss_initial_guess(self, u, inputs_tensor, forcing_tensor):
+        # fig, axs = plt.subplots(1, 5, figsize=(2*4,1.2), subplot_kw={'aspect': 'auto'}, sharex=True, sharey=True, squeeze=True)
+        # im = axs[4].imshow(self.dataset.initial_guess,cmap='jet') #, vmin=0.0, vmax=0.5)
+        # fig.colorbar(im, ax=axs[4])
+        # fig.suptitle("Nx = {}, Ny = {}, LR = {:.1e}, mapping_type = {}, loss_type = {}".format(self.domain_sizeX, self.domain_sizeY, self.learning_rate, self.mapping_type, self.loss_type), fontsize=8) 
+        # plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
+        # exit()
+        initial_guess = self.dataset.initial_guess.unsqueeze(0).unsqueeze(0).type_as(u)
+        loss = torch.sum((u - initial_guess)**2)
+        return loss
 
     def loss_resmin(self, u, inputs_tensor, forcing_tensor):
         N_values = self.Nvalues.type_as(u)
@@ -134,8 +147,8 @@ class SpaceTimeHeat(DiffNet2DFEM):
         R[:,0, 1:  , 1:  ] += R_split[:,3, :, :] #-vf[0,3,:,:]
         # add boundary conditions to R <---- this step is very important
         R = torch.where(bc2>0.5,R*0.0,R)
-        # R = torch.where(bc1>0.5,R*0.0+u0,R)
-        R = torch.masked_select(R, bc1<0.5)
+        R = torch.where(bc1>0.5,R*0.0+u0,R)
+        # R = torch.masked_select(R, bc1<0.5)
         # print(R, torch.sum(R**2))
         #  DEBUG RELATED STUFF
         # utest0 = torch.FloatTensor(torch.sin(math.pi*self.xx)*torch.cos(math.pi*self.yy))
@@ -223,6 +236,10 @@ class SpaceTimeHeat(DiffNet2DFEM):
     def training_step(self, batch, batch_idx):
     # def training_step(self, batch, batch_idx):
         u, inputs_tensor, forcing_tensor = self.forward(batch)
+        if self.mapping_type == 'network':
+            if self.current_epoch < self.initial_guess_epochs:
+                loss_val = self.loss_initial_guess(u, inputs_tensor, forcing_tensor).mean()
+                return {"loss": loss_val}
         if self.loss_type == 'residual':
             loss_val = self.loss_resmin(u, inputs_tensor, forcing_tensor).mean()
         elif self.loss_type == 'energy':
@@ -240,8 +257,8 @@ class SpaceTimeHeat(DiffNet2DFEM):
 
     def configure_optimizers(self):
         lr = self.learning_rate
-        # opts = [torch.optim.LBFGS(self.network.parameters(), lr=1.0, max_iter=5)]
-        opts = [torch.optim.Adam(self.network.parameters(), lr=lr)]
+        opts = [torch.optim.LBFGS(self.network.parameters(), lr=1.0, max_iter=5)]
+        # opts = [torch.optim.Adam(self.network.parameters(), lr=lr)]
         # opts = [torch.optim.Adam(self.network, lr=lr), torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
         return opts, []
 
@@ -273,7 +290,7 @@ class SpaceTimeHeat(DiffNet2DFEM):
         return nu, f, u
 
     def plot_contours(self,nu,f,u):
-        fig, axs = plt.subplots(1, 4, figsize=(2*4,1.2),
+        fig, axs = plt.subplots(1, 5, figsize=(2*4,1.2),
                             subplot_kw={'aspect': 'auto'}, sharex=True, sharey=True, squeeze=True)
         for ax in axs:
             ax.set_xticks([])
@@ -294,6 +311,8 @@ class SpaceTimeHeat(DiffNet2DFEM):
         im3 = axs[3].imshow(diff,cmap='jet') #, vmin=0.0, vmax=0.5)
         fig.colorbar(im3, ax=axs[3])
         ff = self.forcing(self.xgp, self.ygp)
+        im = axs[4].imshow(self.dataset.initial_guess,cmap='jet') #, vmin=0.0, vmax=0.5)
+        fig.colorbar(im, ax=axs[4])
         fig.suptitle("Nx = {}, Ny = {}, LR = {:.1e}, mapping_type = {}, loss_type = {}".format(self.domain_sizeX, self.domain_sizeY, self.learning_rate, self.mapping_type, self.loss_type), fontsize=8) 
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
@@ -303,22 +322,25 @@ def main():
     # u_tensor = np.random.randn(1,1,256,256)
 
     caseId = 0
+    # LR=1e-2
     LR=3e-4
     domain_size = 64
     dir_string = "spacetime-heat"
-    max_epochs = 100
+    max_epochs = 1000
     # loss_type = 'energy'
     loss_type = 'residual'
     mapping_type = 'network'
     # mapping_type = 'no_network'
+    initial_guess_epochs = 0 # learning the initian-guess at the starting few epochs
     
-    u_tensor = np.ones((1,1,domain_size,domain_size))
+    dataset = SpaceTimeRectangleManufactured(domain_size=domain_size)
     if mapping_type == 'no_network':
+        u_tensor = np.ones((1,1,domain_size,domain_size))
+        # u_tensor = dataset.initial_guess
         network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
     elif mapping_type == 'network':
         network = AE(in_channels=1, out_channels=1, dims=domain_size, n_downsample=2)
-    dataset = SpaceTimeRectangleManufactured(domain_size=domain_size)
-    basecase = SpaceTimeHeat(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=LR, loss_type=loss_type, mapping_type=mapping_type)
+    basecase = SpaceTimeHeat(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=LR, loss_type=loss_type, mapping_type=mapping_type, initial_guess_epochs=initial_guess_epochs)
 
     # ------------------------
     # 1 INIT TRAINER
@@ -333,15 +355,23 @@ def main():
         dirpath=logger.log_dir, filename='{epoch}-{step}',
         mode='min', save_last=True)
 
+    t0 = time.time()
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
         max_epochs=max_epochs, deterministic=True, profiler="simple")
+    t1 = time.time()
+    dt_trainer_inst = t1 - t0
 
     # ------------------------
     # 4 Training
     # ------------------------
-
+    t0 = time.time()
     trainer.fit(basecase)
+    t1 = time.time()
+    dt_train = t1 - t0
+
+    print("Trainer instantiation = {:5f} sec".format(dt_trainer_inst))
+    print("Trg time = {:5f} sec".format(dt_train))
 
     # ------------------------
     # 5 SAVE NETWORK

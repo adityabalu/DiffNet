@@ -88,7 +88,9 @@ class SpaceTimeRectangleManufactured(data.Dataset):
         self.diffusivity = 0.1 # self.decay_rt/math.pi**2
         # self.forcing = np.sin(math.pi * xx) * np.exp(-yy) * (self.diffusivity*math.pi**2 - 1.) # np.zeros_like(xx)
         self.forcing = np.zeros_like(xx)
-        self.domain = xx
+        # self.domain = xx
+        self.domain = np.random.normal(0,1.,size=(domain_size, domain_size))
+        self.initial_guess = torch.FloatTensor(np.tile(self.u0[0,:], (domain_size, 1))) + 0.1*torch.rand((domain_size, domain_size), requires_grad=False)
 
     def __len__(self):
         'Denotes the total number of samples'
