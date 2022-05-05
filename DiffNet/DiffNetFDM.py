@@ -130,7 +130,7 @@ class DiffNetFDM(PDE):
         self.stencil_len = 3
 
         padding_d1, ker_x, ker_y, ker_z, padding_d2, ker_xx, ker_yy, ker_zz = get_deriv_kernels(self.nsd, self.ktype, self.stencil_len, self.domain_size)
-        # corr_matX, corr_matY, corr_matX_d2, corr_matY_d2 = get_sobel_correction_matrix(self.nsd, self.output_size, padding_d1, padding_d2)
+        corr_matX, corr_matY, corr_matX_d2, corr_matY_d2 = get_sobel_correction_matrix(self.nsd, self.domain_size, padding_d1, padding_d2)
 
         # self.stencil_len = self.stencil_len
         # self.d2_calc_type = self.d2_calc_type
@@ -142,6 +142,18 @@ class DiffNetFDM(PDE):
         self.sobelxx = nn.Parameter(torch.tensor(ker_xx).unsqueeze(0).unsqueeze(1), requires_grad=False)
         self.sobelyy = nn.Parameter(torch.tensor(ker_yy).unsqueeze(0).unsqueeze(1), requires_grad=False)
         self.sobelzz = nn.Parameter(torch.tensor(ker_zz).unsqueeze(0).unsqueeze(1), requires_grad=False)
+
+        self.h_corr = nn.Parameter((torch.tensor(corr_matX)).unsqueeze(0).unsqueeze(1), requires_grad=False)
+        self.v_corr = nn.Parameter((torch.tensor(corr_matY)).unsqueeze(0).unsqueeze(1), requires_grad=False)
+        
+        self.h_corr_d2 = nn.Parameter(torch.tensor(corr_matX_d2).unsqueeze(0).unsqueeze(1), requires_grad=False)
+        self.v_corr_d2 = nn.Parameter(torch.tensor(corr_matY_d2).unsqueeze(0).unsqueeze(1), requires_grad=False)
+        if self.nsd == 2:
+            self.pad = nn.ReplicationPad2d(padding=padding_d1)
+            self.pad_d2 = nn.ReplicationPad2d(padding=padding_d2)
+        else:
+            self.pad = nn.ReplicationPad3d(padding=padding_d1)
+            self.pad_d2 = nn.ReplicationPad3d(padding=padding_d2)
 
     def derivative_x(self, g):
         # print("size of g = ", g.shape, ", size of sobelx = ", self.sobelx.shape, ", size of h_corr = ", self.h_corr.shape)

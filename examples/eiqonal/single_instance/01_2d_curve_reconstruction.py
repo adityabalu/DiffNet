@@ -22,8 +22,9 @@ from pytorch_lightning.loggers import TensorBoardLogger
 seed_everything(42)
 
 import DiffNet
-from DiffNet.networks.conv11 import ImplicitConv
+from DiffNet.networks.autoencoders import AE
 from DiffNet.DiffNetFEM import DiffNet2DFEM
+from DiffNet.DiffNetFDM import DiffNetFDM
 import PIL
 from torch.utils import data
 
@@ -112,7 +113,8 @@ class PCVox(data.Dataset):
         # bc2 will be the normals in x direction
         self.bc3 = np.divide(ny,(nx**2 + ny**2), out=np.zeros_like(ny), where=((nx**2 + ny**2)!=0))
         # print(self.bc1.shape, self.bc2.shape, self.bc3.shape)
-        self.n_samples = 100    
+        self.n_samples = 1000
+        self.input = np.random.randn(*self.domain.shape) 
 
     def __len__(self):
         'Denotes the total number of samples'
@@ -120,15 +122,17 @@ class PCVox(data.Dataset):
 
     def __getitem__(self, index):
         'Generates one sample of data'
-        inputs = np.array([self.domain, self.bc1, self.bc2, self.bc3])
+        inputs = np.array([self.input, self.bc1, self.bc2, self.bc3])
         forcing = np.ones_like(self.domain)
         return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
 
 
-class Eiqonal(DiffNet2DFEM):
+class Eiqonal(DiffNet2DFEM,DiffNetFDM):
     """docstring for Eiqonal"""
     def __init__(self, network, dataset, **kwargs):
         super(Eiqonal, self).__init__(network, dataset, **kwargs)
+        self.mapping_type = kwargs.get('mapping_type', 'no_network')
+        self.loss_type = kwargs.get('loss_type', 'FDM')
 
         self.network = network
 
@@ -139,8 +143,37 @@ class Eiqonal(DiffNet2DFEM):
         Aglobal[:,0, 1:  , 1:  ] += Aloc_all[:,3, :, :]
         return Aglobal
 
-    def loss(self, u, inputs_tensor, forcing_tensor):
+    def lossFDM(self, u, inputs_tensor, forcing_tensor):
+        f = forcing_tensor # renaming variable
 
+        # init bin widths
+        hx = self.h
+        hy = self.h
+
+        # extract diffusivity and boundary conditions here
+        bc1 = inputs_tensor[:,1:2,:,:]  # sdf = 0.5 at boundary else 0.
+        bc2 = inputs_tensor[:,2:3,:,:]  # normals in the x-direction
+        bc3 = inputs_tensor[:,3:4,:,:]  # normals in the y-direction
+
+        # apply boundary conditions
+        # build reconstruction boundary loss
+        zeros = torch.zeros_like(u)
+        sdf_recon = torch.where(bc1>0.5, u, zeros)
+        sdf_recon_loss = torch.sum(sdf_recon**2)
+
+        u_x = self.derivative_x(self.pad(u))
+        u_y = self.derivative_y(self.pad(u))
+
+        R1 = (u_x**2 + u_y**2) - 1.0
+
+        u_reg = torch.where(bc1<0.5, u, zeros)
+        # reg_loss = torch.exp(-100*(u_reg**2))
+        loss = torch.norm(R1, 'fro') + sdf_recon_loss
+        # loss = torch.mean(res_elmwise1**2) + sdf_recon_loss
+        return loss
+
+
+    def loss(self, u, inputs_tensor, forcing_tensor):
         f = forcing_tensor # renaming variable
 
         # init bin widths
@@ -155,14 +188,13 @@ class Eiqonal(DiffNet2DFEM):
         bc1 = inputs_tensor[:,1:2,:,:]  # sdf = 0.5 at boundary else 0.
         bc2 = inputs_tensor[:,2:3,:,:]  # normals in the x-direction
         bc3 = inputs_tensor[:,3:4,:,:]  # normals in the y-direction
-        u = torch.unsqueeze(u, 0)
 
         # apply boundary conditions
         # build reconstruction boundary loss
         zeros = torch.zeros_like(u)
         sdf_recon = torch.where(bc1>0.5, u, zeros)
 
-        u = torch.where(bc1>0.5, u*0.0, u) # this may give misleading gradient if we are trying to learn B.C.s
+        # u = torch.where(bc1>0.5, u*0.0, u) # this may give misleading gradient if we are trying to learn B.C.s
 
         u_gp = self.gauss_pt_evaluation(u)
         bc2_gp = self.gauss_pt_evaluation(bc2)
@@ -176,11 +208,15 @@ class Eiqonal(DiffNet2DFEM):
         N_values = self.Nvalues.type_as(f)
 
         # First loss - eikonal eqn ie   grad(u) = 1
-        eikonal_lhs = N_values*((u_x_gp)**2 + (u_y_gp)**2)
+        grad_u_gp = torch.stack((u_x_gp,u_y_gp))
+        eikonal_lhs = N_values*torch.norm(grad_u_gp, p=2, dim=0)
+        # print(grad_u_gp.size(),torch.norm(grad_u_gp, p=2, dim=0).size())
+        # eikonal_lhs = N_values*((u_x_gp)**2 + (u_y_gp)**2)
         # eikonal_rhs = 1.0
-        eikonal_rhs = N_values*1.0
-        res_elmwise1 = JxW * (eikonal_lhs - eikonal_rhs) # \nabla \phi - 1 = 0  JxW addresses discretization of domain
-
+        eikonal_rhs = N_values
+        # print(eikonal_lhs.size(), eikonal_rhs.size())
+        res_elmwise1 = JxW * ((eikonal_lhs - eikonal_rhs) - 0.001*(u_x_gp**2 + u_y_gp**2))# \nabla \phi - 1 = 0  JxW addresses discretization of domain
+        # print(res_elmwise1.size())
         # First loss regularizer
         # res_elmwise1_regularizer = torch.exp(-100*torch.abs(u_gp))
 
@@ -193,13 +229,14 @@ class Eiqonal(DiffNet2DFEM):
         # res_elmwise2 = JxW * (normals_lhs - normals_rhs)
 
         # Third loss - boundary reconstruction
-        # sdf_recon_loss = torch.sum(sdf_recon**2)
+        sdf_recon_loss = torch.sum(sdf_recon**2)
 
         # Assemble 
         # print('***'*10)
         # print(torch.sum(res_elmwise1, 1).shape)
         # print('***'*10)
         R1 = torch.zeros_like(u); R1 = self.Q1_vector_assembly(R1, torch.sum(res_elmwise1, 1))
+        # R1 = torch.where(bc1>0.5, R1*0.0, R1)
         # R2 = torch.zeros_like(u); R2 = self.Q1_vector_assembly(R2, res_elmwise2)
 
         # print('*'*10)
@@ -226,21 +263,43 @@ class Eiqonal(DiffNet2DFEM):
 
         # res_elmwise = torch.sum(res_elmwise1, 1) + torch.sum(res_elmwise2, 1)  + sdf_recon_loss # + torch.sum(res_elmwise1_regularizer, 1)
         # res_elmwise = torch.norm(R1, 'fro') + torch.norm(R2, 'fro') + sdf_recon_loss
-        loss = torch.norm(R1, 'fro')# + sdf_recon_loss
-        # loss = torch.mean(res_elmwise) 
+
+        u_reg = torch.where(bc1<0.5, u, zeros)
+        reg_loss = torch.exp(-100*(u_reg**2))
+        loss = torch.norm(R1, 'fro') + sdf_recon_loss
+        # loss = torch.mean(res_elmwise1**2) + sdf_recon_loss
         return loss
 
     def forward(self, batch):
         inputs_tensor, forcing_tensor = batch
-        return self.network[0], inputs_tensor, forcing_tensor
+        if self.mapping_type == 'no_network':
+            return self.network[0], inputs_tensor, forcing_tensor
+        elif self.mapping_type == 'network':
+            nu = inputs_tensor[:,0:1,:,:]
+            return self.network(nu), inputs_tensor, forcing_tensor
 
     def configure_optimizers(self):
         """
         Configure optimizer for network parameters
         """
         lr = self.learning_rate
-        opt = torch.optim.Adam(self.network, lr=lr)
-        return opt
+        # opts = [torch.optim.LBFGS(self.network.parameters(), lr=1.0, max_iter=5)]
+        opts = [torch.optim.Adam(self.network.parameters(), lr=lr)]
+        return opts
+
+    def training_step(self, batch, batch_idx):
+    # def training_step(self, batch, batch_idx):
+        u, inputs_tensor, forcing_tensor = self.forward(batch)
+        if self.loss_type == 'FEM':
+            loss_val = self.loss(u, inputs_tensor, forcing_tensor).mean()
+        elif self.loss_type == 'FDM':
+            loss_val = self.lossFDM(u, inputs_tensor, forcing_tensor).mean()
+        # loss_val = self.loss_resmin(u, inputs_tensor, forcing_tensor).mean()
+        # loss_val = self.loss_resmin_mass(u, inputs_tensor, forcing_tensor).mean()
+        # loss_val = self.loss_matvec(u, inputs_tensor, forcing_tensor).mean()
+        # self.log('PDE_loss', loss_val.item())
+        # self.log('loss', loss_val.item())
+        return {"loss": loss_val}
 
     def on_epoch_end(self):
         fig, axs = plt.subplots(1, 4, figsize=(2*7,4),
@@ -268,8 +327,8 @@ class Eiqonal(DiffNet2DFEM):
         sdf_boundary_residual = torch.where(bc1>0.5, u, zeros)
 
         # GQ eval
-        u_x_gp = self.gauss_pt_evaluation_der_x(u.unsqueeze(0))
-        u_y_gp = self.gauss_pt_evaluation_der_y(u.unsqueeze(0))
+        u_x_gp = self.gauss_pt_evaluation_der_x(u)
+        u_y_gp = self.gauss_pt_evaluation_der_y(u)
         # bin width (reimann sum)
         gpw = self.gpw.type_as(f)
         hx = self.h
@@ -279,17 +338,22 @@ class Eiqonal(DiffNet2DFEM):
         N_values = self.Nvalues.type_as(f)
 
         # Eikonal lhs
-        eikonal_lhs = N_values*((u_x_gp)**2 + (u_y_gp)**2)
+        eikonal_lhs = ((u_x_gp)**2 + (u_y_gp)**2)
         # eikonal_rhs = 1.0
-        eikonal_rhs = N_values*1.0
+        eikonal_rhs = 1.0
         res_elmwise1 = JxW * (eikonal_lhs - eikonal_rhs)
+        R1 = torch.sum(res_elmwise1, 1)**2
         # Assemble to image representation
         # print('***'*10)
         # print('IN EPOCH END')
         # print(torch.sum(res_elmwise1, 1).shape)
         # print('***'*10)
         # exit()
-        R1 = torch.zeros_like(u.unsqueeze(0)); R1 = self.Q1_vector_assembly(R1, torch.sum(res_elmwise1, 1))
+
+        # R1 = torch.zeros_like(u.unsqueeze(0)); R1 = self.Q1_vector_assembly(R1, torch.sum(res_elmwise1, 1))
+        # R1 = torch.where(bc1>0.5, R1*0.0, R1)
+
+
 
         bc1 = bc1.squeeze().detach().cpu()
         bc2 = bc2.squeeze().detach().cpu()
@@ -327,11 +391,16 @@ class Eiqonal(DiffNet2DFEM):
         plt.close('all')
 
 def main():
-    img_size = 256
-    u_tensor = np.ones((1,1,256,256))
-    network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor[:,0,:,:]), requires_grad=True)])
-    dataset = PCVox('images/bell-8.png', domain_size=256)
-    basecase = Eiqonal(network, dataset, batch_size=1, fem_basis_deg=1, domain_size=img_size, domain_length=img_size)
+    Nx = Ny = 256
+    LR=3e-4
+    mapping_type = 'no_network'
+    u_tensor = np.ones((1,1,Ny, Nx))
+    if mapping_type == 'no_network':
+        network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
+    elif mapping_type == 'network':
+        network = AE(in_channels=1, out_channels=1, dims=Nx, n_downsample=2)
+    dataset = PCVox('../ImageDataset/bonefishes-1.png', domain_size=256)
+    basecase = Eiqonal(network, dataset, batch_size=1, fem_basis_deg=1, domain_size=Nx, domain_length=Nx, learning_rate=LR, mapping_type=mapping_type, loss_type='FDM')
 
     # ------------------------
     # 1 INIT TRAINER
