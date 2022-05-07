@@ -30,15 +30,16 @@ from torch.utils import data
 
 
 
+
 def im_io(filepath):
     image = io.imread(filepath).astype(bool).astype(float)
     
 
     return im2pc(image)
 
-
-def im2pcpix(image):
-    pix_out = np.zeros_like(image)
+def im2pc(image, nx, ny):
+    pc = []
+    normals = []
     for i in range(image.shape[0]):
         for j in range(image.shape[1]):
             if image[i,j] == 1.0:
@@ -68,8 +69,9 @@ def im2pcpix(image):
                     if image[i-1,j-1] == 0:
                         boundary = 1
                 if boundary == 1:
-                    pix_out[i,j] = 1.0
-    return pix_out
+                    pc.append([i+0.5,j+0.5])
+                    normals.append([nx[i,j]/(nx[i,j]**2 + ny[i,j]**2), ny[i,j]/(nx[i,j]**2 + ny[i,j]**2)])
+    return np.array(pc), np.array(normals)
 
 
 class PCVox(data.Dataset):
@@ -85,36 +87,34 @@ class PCVox(data.Dataset):
             img = (np.asarray(img)>0).astype('float')
         else:
             raise ValueError('invalid extension; extension not supported')
-        self.domain = np.ones_like(img)
-
 
         # Define kernel for x differences
         kx = np.array([[1,0,-1],[2,0,-2],[1,0,-1]])
         # Define kernel for y differences
         ky = np.array([[1,2,1] ,[0,0,0], [-1,-2,-1]])
         # Perform x convolution
-        nx=ndimage.convolve(img,kx)
+        nx = ndimage.convolve(img,kx)
         # Perform y convolution
-        ny=ndimage.convolve(img,ky)
+        ny = ndimage.convolve(img,ky)
+        nx = np.divide(nx,(nx**2 + ny**2), out=np.zeros_like(nx), where=((nx**2 + ny**2)!=0))
+        ny = np.divide(ny,(nx**2 + ny**2), out=np.zeros_like(ny), where=((nx**2 + ny**2)!=0))
 
-        # sdf = ndimage.distance_transform_edt(img)
-        # sdf += (-1)*ndimage.distance_transform_edt(1-img)
-        # plt.figure()
-        # plt.imshow((-1)*sdf/(sdf.shape[0]),cmap='jet', vmin=-1.0, vmax=1.0)
-        # plt.colorbar()
-        # plt.show()
-        # exit()
-        
         # bc1 will be source, sdf will be set to 0.5 at these locations
-        self.bc1 = im2pcpix(img)
+        self.pc, self.normals = im2pc(img,nx,ny)
+        self.pc = self.pc/(img.shape[0])
 
-        # bc2 will be the normals in x direction
-        self.bc2 = np.divide(nx,(nx**2 + ny**2), out=np.zeros_like(nx), where=((nx**2 + ny**2)!=0))
-        # bc2 will be the normals in x direction
-        self.bc3 = np.divide(ny,(nx**2 + ny**2), out=np.zeros_like(ny), where=((nx**2 + ny**2)!=0))
-        # print(self.bc1.shape, self.bc2.shape, self.bc3.shape)
-        self.n_samples = 1000
-        self.input = np.random.randn(*self.domain.shape) 
+        # pt_cloud = []
+        # for _ in range(1000):
+        #     vec = np.random.randn(2)
+        #     vec /= 4*np.linalg.norm(vec)
+        #     pt_cloud.append(vec)
+        # pt_cloud = np.array(pt_cloud)
+        # self.normals = pt_cloud*4.0
+        # self.pc = pt_cloud + 0.5
+
+        self.domain = np.ones((domain_size,domain_size))
+        self.domain_size = domain_size
+        self.n_samples = 100
 
     def __len__(self):
         'Denotes the total number of samples'
@@ -122,9 +122,10 @@ class PCVox(data.Dataset):
 
     def __getitem__(self, index):
         'Generates one sample of data'
-        inputs = np.array([self.input, self.bc1, self.bc2, self.bc3])
+        inputs = np.array([self.pc, self.normals]) # 2, Npoint, 2
         forcing = np.ones_like(self.domain)
         return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
+
 
 
 class Eiqonal(DiffNet2DFEM,DiffNetFDM):
@@ -150,25 +151,63 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
         hx = self.h
         hy = self.h
 
-        # extract diffusivity and boundary conditions here
-        bc1 = inputs_tensor[:,1:2,:,:]  # sdf = 0.5 at boundary else 0.
-        bc2 = inputs_tensor[:,2:3,:,:]  # normals in the x-direction
-        bc3 = inputs_tensor[:,3:4,:,:]  # normals in the y-direction
-
-        # apply boundary conditions
-        # build reconstruction boundary loss
-        zeros = torch.zeros_like(u)
-        sdf_recon = torch.where(bc1>0.5, u, zeros)
-        sdf_recon_loss = torch.sum(sdf_recon**2)
-
         u_x = self.derivative_x(self.pad(u))
         u_y = self.derivative_y(self.pad(u))
 
         R1 = (u_x**2 + u_y**2) - 1.0
 
-        u_reg = torch.where(bc1<0.5, u, zeros)
+
+        # extract diffusivity and boundary conditions here
+        pc = inputs_tensor[:,0:1,:,:].type_as(f)
+        normals = inputs_tensor[:,1:2,:,:].type_as(f)
+
+        # apply boundary conditions
+        nidx = (pc[:,:,:,0]/self.hx).type(torch.LongTensor).to(pc.device)
+        nidy = (pc[:,:,:,1]/self.hy).type(torch.LongTensor).to(pc.device)
+
+        u_pts_grid =  torch.stack([
+                torch.stack([
+                    torch.stack([u[b,0,nidx[b,0,:],nidy[b,0,:]] for b in range(u.size(0))]),
+                    torch.stack([u[b,0,nidx[b,0,:]+1,nidy[b,0,:]] for b in range(u.size(0))])]),
+                torch.stack([
+                    torch.stack([u[b,0,nidx[b,0,:],nidy[b,0,:]+1] for b in range(u.size(0))]),
+                    torch.stack([u[b,0,nidx[b,0,:]+1,nidy[b,0,:]+1] for b in range(u.size(0))])])
+                ]).unsqueeze(2)
+
+        x_pts = pc[:,:,:,0] - nidx.type_as(pc)*self.hx 
+        y_pts = pc[:,:,:,1] - nidy.type_as(pc)*self.hy
+
+        xi_pts = (x_pts*2)/self.hx - 1
+        eta_pts = (y_pts*2)/self.hy - 1
+
+        # print(xi_pts, eta_pts)
+
+        N_values_pts = self.bf_1d_th(xi_pts).unsqueeze(0)*self.bf_1d_th(eta_pts).unsqueeze(1)
+        dN_x_values_pts = self.bf_1d_der_th(xi_pts).unsqueeze(0)*self.bf_1d_th(eta_pts).unsqueeze(1)
+        dN_y_values_pts = self.bf_1d_th(xi_pts).unsqueeze(0)*self.bf_1d_der_th(eta_pts).unsqueeze(1)
+
+        u_pts = torch.sum(torch.sum(N_values_pts*u_pts_grid,0),0)
+        u_x_pts = torch.sum(torch.sum(dN_x_values_pts*u_pts_grid,0),0)
+        u_y_pts = torch.sum(torch.sum(dN_y_values_pts*u_pts_grid,0),0)
+
+        # Second loss - boundary loss
+        sdf_recon_loss = torch.sum(u_pts**2)
+
+        # Third loss - boundary reconstruction
+        normals_loss = torch.nn.functional.mse_loss(u_x_pts, normals[:,:,:,0], reduction='sum') + torch.nn.functional.mse_loss(u_y_pts, normals[:,:,:,1], reduction='sum')
+
+        # res_elmwise2 = JxW * normals
+        # res_elmwise2 = JxW * (normals_lhs - normals_rhs)
+        # Assemble 
+        # print('***'*10)
+        # print(torch.sum(res_elmwise1, 1).shape)
+        # print('***'*10)
+        # R1 = torch.zeros_like(u); R1 = self.Q1_vector_assembly(R1, torch.sum(res_elmwise1, 1))
+
+
         # reg_loss = torch.exp(-100*(u_reg**2))
-        loss = torch.norm(R1, 'fro') + sdf_recon_loss
+        loss = torch.mean(R1**2) + sdf_recon_loss + normals_loss
+        # loss = torch.norm(R1, 'fro') + 1000*sdf_recon_loss + 10*normals_loss
         # loss = torch.mean(res_elmwise1**2) + sdf_recon_loss
         return loss
 
@@ -181,93 +220,80 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
         hy = self.h
 
         # init vars for weak formulation
-        N_values = self.Nvalues.type_as(f)
-        gpw = self.gpw.type_as(f)
+        N_values = self.Nvalues.type_as(u)
+        gpw = self.gpw.type_as(u)
         
-        # extract diffusivity and boundary conditions here
-        bc1 = inputs_tensor[:,1:2,:,:]  # sdf = 0.5 at boundary else 0.
-        bc2 = inputs_tensor[:,2:3,:,:]  # normals in the x-direction
-        bc3 = inputs_tensor[:,3:4,:,:]  # normals in the y-direction
-
-        # apply boundary conditions
-        # build reconstruction boundary loss
-        zeros = torch.zeros_like(u)
-        sdf_recon = torch.where(bc1>0.5, u, zeros)
-
-        # u = torch.where(bc1>0.5, u*0.0, u) # this may give misleading gradient if we are trying to learn B.C.s
-
         u_gp = self.gauss_pt_evaluation(u)
-        bc2_gp = self.gauss_pt_evaluation(bc2)
-        bc3_gp = self.gauss_pt_evaluation(bc3)
         u_x_gp = self.gauss_pt_evaluation_der_x(u)
         u_y_gp = self.gauss_pt_evaluation_der_y(u)
 
-        # bin width (reimann sum)
+        # Eikonal Residual on the domain
         trnsfrm_jac = (0.5*hx)*(0.5*hy)
         JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
-        N_values = self.Nvalues.type_as(f)
-
-        # First loss - eikonal eqn ie   grad(u) = 1
-        grad_u_gp = torch.stack((u_x_gp,u_y_gp))
-        eikonal_lhs = N_values*torch.norm(grad_u_gp, p=2, dim=0)
-        # print(grad_u_gp.size(),torch.norm(grad_u_gp, p=2, dim=0).size())
-        # eikonal_lhs = N_values*((u_x_gp)**2 + (u_y_gp)**2)
+        # eikonal_lhs = N_values*(u_x_gp**2 + u_y_gp**2)
         # eikonal_rhs = 1.0
-        eikonal_rhs = N_values
-        # print(eikonal_lhs.size(), eikonal_rhs.size())
-        res_elmwise1 = JxW * ((eikonal_lhs - eikonal_rhs) - 0.001*(u_x_gp**2 + u_y_gp**2))# \nabla \phi - 1 = 0  JxW addresses discretization of domain
-        # print(res_elmwise1.size())
-        # First loss regularizer
-        # res_elmwise1_regularizer = torch.exp(-100*torch.abs(u_gp))
+        # res_elmwise1 = torch.sum(JxW * (eikonal_lhs), 2)# \nabla \phi - 1 = 0  JxW addresses discretization of domain
+        # R1 = torch.zeros_like(u); R1 = self.Q1_vector_assembly(R1, res_elmwise1)
 
-        # Second loss - normals
-        # normals = 1.0 - (u_x_gp*bc2_gp + u_y_gp*bc3_gp) 
-        # normals_lhs =  (N_values**2 * u_x_gp * bc2_gp) + (N_values**2 * u_y_gp * bc3_gp) # treat this as a directional eikonal??
-        # normals_rhs = N_values * 1. 
-        # normals = (u_x_gp - bc2_gp) + (u_y_gp - bc3_gp) # this makes more sense ie mse(pred_u_normals, normals)
-        # res_elmwise2 = JxW * normals
-        # res_elmwise2 = JxW * (normals_lhs - normals_rhs)
+        R1 = torch.sum(u_x_gp**2 + u_y_gp**2, 2) - 1.0
+
+
+        # extract diffusivity and boundary conditions here
+        pc = inputs_tensor[:,0:1,:,:].type_as(f)
+        normals = inputs_tensor[:,1:2,:,:].type_as(f)
+
+        # apply boundary conditions
+        nidx = (pc[:,:,:,0]/self.hx).type(torch.LongTensor).to(pc.device)
+        nidy = (pc[:,:,:,1]/self.hy).type(torch.LongTensor).to(pc.device)
+
+        u_pts_grid =  torch.stack([
+                torch.stack([
+                    torch.stack([u[b,0,nidx[b,0,:],nidy[b,0,:]] for b in range(u.size(0))]),
+                    torch.stack([u[b,0,nidx[b,0,:]+1,nidy[b,0,:]] for b in range(u.size(0))])]),
+                torch.stack([
+                    torch.stack([u[b,0,nidx[b,0,:],nidy[b,0,:]+1] for b in range(u.size(0))]),
+                    torch.stack([u[b,0,nidx[b,0,:]+1,nidy[b,0,:]+1] for b in range(u.size(0))])])
+                ]).unsqueeze(2)
+
+        x_pts = pc[:,:,:,0] - nidx.type_as(pc)*self.hx 
+        y_pts = pc[:,:,:,1] - nidy.type_as(pc)*self.hy
+
+        xi_pts = (x_pts*2)/self.hx - 1
+        eta_pts = (y_pts*2)/self.hy - 1
+
+        # print(xi_pts, eta_pts)
+
+        N_values_pts = self.bf_1d_th(xi_pts).unsqueeze(0)*self.bf_1d_th(eta_pts).unsqueeze(1)
+        dN_x_values_pts = self.bf_1d_der_th(xi_pts).unsqueeze(0)*self.bf_1d_th(eta_pts).unsqueeze(1)
+        dN_y_values_pts = self.bf_1d_th(xi_pts).unsqueeze(0)*self.bf_1d_der_th(eta_pts).unsqueeze(1)
+
+        u_pts = torch.sum(torch.sum(N_values_pts*u_pts_grid,0),0)
+        u_x_pts = torch.sum(torch.sum(dN_x_values_pts*u_pts_grid,0),0)
+        u_y_pts = torch.sum(torch.sum(dN_y_values_pts*u_pts_grid,0),0)
+
+        # Second loss - boundary loss
+        sdf_recon_loss = torch.sum((u_pts - 0.0)**2)
 
         # Third loss - boundary reconstruction
-        sdf_recon_loss = torch.sum(sdf_recon**2)
+        normals_loss = torch.nn.functional.mse_loss(u_x_pts, normals[:,:,:,0]) + torch.nn.functional.mse_loss(u_y_pts, normals[:,:,:,1])
 
+        # res_elmwise2 = JxW * normals
+        # res_elmwise2 = JxW * (normals_lhs - normals_rhs)
         # Assemble 
         # print('***'*10)
         # print(torch.sum(res_elmwise1, 1).shape)
         # print('***'*10)
-        R1 = torch.zeros_like(u); R1 = self.Q1_vector_assembly(R1, torch.sum(res_elmwise1, 1))
-        # R1 = torch.where(bc1>0.5, R1*0.0, R1)
-        # R2 = torch.zeros_like(u); R2 = self.Q1_vector_assembly(R2, res_elmwise2)
+        # R1 = torch.zeros_like(u); R1 = self.Q1_vector_assembly(R1, torch.sum(res_elmwise1, 1))
 
-        # print('*'*10)
-        # print('u_x_gp = ', u_x_gp.shape)
-        # print('JxW = ', JxW.shape)
-        # print('N_values = ', N_values.shape)
-        # print('JxW * N_values = ', (JxW * N_values).shape)
-        # print('res_elmwise1 = ', res_elmwise1.shape)
-        # print('res_elmwise2 = ', res_elmwise2.shape)
-        # print('sum of res_elmwise1 = ', torch.sum(res_elmwise1, 1).shape)
-        # print('sum of res_elmwise2 = ', torch.sum(res_elmwise2, 1).shape)
-        # print('sdf_loss = ', sdf_recon_loss.shape)
-        # print('*'*10)
-        # exit()
-
-        # ********** From elastic single instance
-        # temp1 =  torch.Size([1, 4, 4, 31, 31])
-        # R_split_1 =  torch.Size([1, 4, 31, 31])
-        # R1 =  torch.Size([1, 1, 32, 32])
-        # **********
-        
-
-
-
-        # res_elmwise = torch.sum(res_elmwise1, 1) + torch.sum(res_elmwise2, 1)  + sdf_recon_loss # + torch.sum(res_elmwise1_regularizer, 1)
-        # res_elmwise = torch.norm(R1, 'fro') + torch.norm(R2, 'fro') + sdf_recon_loss
-
-        u_reg = torch.where(bc1<0.5, u, zeros)
-        reg_loss = torch.exp(-100*(u_reg**2))
-        loss = torch.norm(R1, 'fro') + sdf_recon_loss
-        # loss = torch.mean(res_elmwise1**2) + sdf_recon_loss
+        reg_loss = torch.exp(-100*(torch.abs(u)))
+        if self.current_epoch < 3:
+            loss = 10*torch.norm(R1, 'fro') + 1000*sdf_recon_loss  + 5*reg_loss
+        else:
+            loss = 100*torch.norm(R1, 'fro') + 1000*sdf_recon_loss 
+        print()
+        print('R1:', torch.norm(R1, 'fro').item())
+        print('SDF loss:', sdf_recon_loss.item())
+        print('normals loss:', normals_loss.item())
         return loss
 
     def forward(self, batch):
@@ -283,8 +309,8 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
         Configure optimizer for network parameters
         """
         lr = self.learning_rate
-        # opts = [torch.optim.LBFGS(self.network.parameters(), lr=1.0, max_iter=5)]
-        opts = [torch.optim.Adam(self.network.parameters(), lr=lr)]
+        opts = [torch.optim.LBFGS(self.network.parameters(), lr=1.0, max_iter=5)]
+        # opts = [torch.optim.Adam(self.network.parameters(), lr=lr)]
         return opts
 
     def training_step(self, batch, batch_idx):
@@ -302,7 +328,7 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
         return {"loss": loss_val}
 
     def on_epoch_end(self):
-        fig, axs = plt.subplots(1, 4, figsize=(2*7,4),
+        fig, axs = plt.subplots(1, 3, figsize=(2*7,4),
                             subplot_kw={'aspect': 'auto'}, sharex=True, sharey=True, squeeze=True)
         for ax in axs:
             ax.set_xticks([])
@@ -315,68 +341,93 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
 
         f = forcing_tensor # renaming variable
         
-        # extract diffusivity and boundary conditions here
-        bc1 = inputs_tensor[:,1:2,:,:]
-        bc2 = inputs_tensor[:,2:3,:,:] 
-        bc3 = inputs_tensor[:,3:4,:,:]
-
-        # u_bc = torch.where(bc1>0.5,u*0.001,u)
-
-        # build reconstruction boundary loss
-        zeros = torch.zeros_like(u)
-        sdf_boundary_residual = torch.where(bc1>0.5, u, zeros)
-
-        # GQ eval
-        u_x_gp = self.gauss_pt_evaluation_der_x(u)
-        u_y_gp = self.gauss_pt_evaluation_der_y(u)
-        # bin width (reimann sum)
-        gpw = self.gpw.type_as(f)
+        # init bin widths
         hx = self.h
         hy = self.h
+
+        # init vars for weak formulation
+        N_values = self.Nvalues.type_as(f)
+        gpw = self.gpw.type_as(f)
+        
+
+        u_gp = self.gauss_pt_evaluation(u)
+        u_x_gp = self.gauss_pt_evaluation_der_x(u)
+        u_y_gp = self.gauss_pt_evaluation_der_y(u)
+
+        # Eikonal Residual on the domain
         trnsfrm_jac = (0.5*hx)*(0.5*hy)
         JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
-        N_values = self.Nvalues.type_as(f)
-
-        # Eikonal lhs
-        eikonal_lhs = ((u_x_gp)**2 + (u_y_gp)**2)
-        # eikonal_rhs = 1.0
+        eikonal_lhs = (u_x_gp**2 + u_y_gp**2)
         eikonal_rhs = 1.0
-        res_elmwise1 = JxW * (eikonal_lhs - eikonal_rhs)
-        R1 = torch.sum(res_elmwise1, 1)**2
-        # Assemble to image representation
+        res_elmwise1 = JxW * (eikonal_lhs)# \nabla \phi - 1 = 0  JxW addresses discretization of domain
+        R1 = torch.zeros_like(u); R1 = self.Q1_vector_assembly(R1, res_elmwise1)
+        # extract diffusivity and boundary conditions here
+        pc = inputs_tensor[:,0:1,:,:].type_as(f)
+        normals = inputs_tensor[:,1:2,:,:].type_as(f)
+
+        # apply boundary conditions
+        nidx = (pc[:,:,:,0]/self.hx).type(torch.LongTensor).to(pc.device)
+        nidy = (pc[:,:,:,1]/self.hy).type(torch.LongTensor).to(pc.device)
+
+        u_pts_grid =  torch.stack([
+                torch.stack([
+                    torch.stack([u[b,0,nidx[b,0,:],nidy[b,0,:]] for b in range(u.size(0))]),
+                    torch.stack([u[b,0,nidx[b,0,:]+1,nidy[b,0,:]] for b in range(u.size(0))])]),
+                torch.stack([
+                    torch.stack([u[b,0,nidx[b,0,:],nidy[b,0,:]+1] for b in range(u.size(0))]),
+                    torch.stack([u[b,0,nidx[b,0,:]+1,nidy[b,0,:]+1] for b in range(u.size(0))])])
+                ]).unsqueeze(2)
+
+        x_pts = pc[:,:,:,0] - nidx.type_as(pc)*self.hx 
+        y_pts = pc[:,:,:,1] - nidy.type_as(pc)*self.hy
+
+        xi_pts = (x_pts*2)/self.hx - 1
+        eta_pts = (y_pts*2)/self.hy - 1
+
+        # print(xi_pts, eta_pts)
+
+        N_values_pts = self.bf_1d_th(xi_pts).unsqueeze(0)*self.bf_1d_th(eta_pts).unsqueeze(1)
+        dN_x_values_pts = self.bf_1d_der_th(xi_pts).unsqueeze(0)*self.bf_1d_th(eta_pts).unsqueeze(1)
+        dN_y_values_pts = self.bf_1d_th(xi_pts).unsqueeze(0)*self.bf_1d_der_th(eta_pts).unsqueeze(1)
+
+        u_pts = torch.sum(torch.sum(N_values_pts*u_pts_grid,0),0)
+        u_x_pts = torch.sum(torch.sum(dN_x_values_pts*u_pts_grid,0),0)
+        u_y_pts = torch.sum(torch.sum(dN_y_values_pts*u_pts_grid,0),0)
+
+        # Second loss - boundary loss
+        sdf_recon_loss = torch.sum(u_pts**2)
+
+        # Third loss - boundary reconstruction
+        normals_loss = torch.sum((1.0 - (u_x_pts*normals[:,:,:,0] + u_y_pts*normals[:,:,:,1]))**2)
+
+        # res_elmwise2 = JxW * normals
+        # res_elmwise2 = JxW * (normals_lhs - normals_rhs)
+        # Assemble 
         # print('***'*10)
-        # print('IN EPOCH END')
         # print(torch.sum(res_elmwise1, 1).shape)
         # print('***'*10)
-        # exit()
-
-        # R1 = torch.zeros_like(u.unsqueeze(0)); R1 = self.Q1_vector_assembly(R1, torch.sum(res_elmwise1, 1))
-        # R1 = torch.where(bc1>0.5, R1*0.0, R1)
+        # R1 = torch.zeros_like(u); R1 = self.Q1_vector_assembly(R1, torch.sum(res_elmwise1, 1))
 
 
-
-        bc1 = bc1.squeeze().detach().cpu()
-        bc2 = bc2.squeeze().detach().cpu()
-        bc3 = bc3.squeeze().detach().cpu()
         u = u.squeeze().detach().cpu()
-        sdf_boundary_residual = sdf_boundary_residual.squeeze().detach().cpu()
+        # sdf_boundary_residual = sdf_boundary_residual.squeeze().detach().cpu()
         R1 = R1.squeeze().detach().cpu()
 
         im0 = axs[0].imshow(u,cmap='jet')
         fig.colorbar(im0, ax=axs[0])
         axs[0].set_title('u')
 
-        im1 = axs[1].imshow(sdf_boundary_residual, vmin=0, vmax=1, cmap='gray')
+        im1 = axs[1].imshow(R1, vmin=0, vmax=1, cmap='gray')
         fig.colorbar(im1, ax=axs[1])
-        axs[1].set_title('sdf res')
+        axs[1].set_title('Eikonal residual')
 
-        im2 = axs[2].imshow(R1, cmap='jet')
+        im2 = axs[2].imshow(abs(u), cmap='jet')
         fig.colorbar(im2, ax=axs[2])
-        axs[2].set_title('Eikonal residual')
+        axs[2].set_title('Unsigned Distance Field')
 
-        im3 = axs[3].imshow(bc1,cmap='jet')
-        fig.colorbar(im3, ax=axs[3])  
-        axs[3].set_title('source')
+        # im3 = axs[3].imshow(bc1,cmap='jet')
+        # fig.colorbar(im3, ax=axs[3])  
+        # axs[3].set_title('source')
 
         # im4 = axs[4].imshow(bc2,cmap='jet')
         # fig.colorbar(im4, ax=axs[4])
@@ -394,13 +445,13 @@ def main():
     Nx = Ny = 256
     LR=3e-4
     mapping_type = 'no_network'
-    u_tensor = np.ones((1,1,Ny, Nx))
+    u_tensor = np.random.randn(1,1,Ny, Nx)
     if mapping_type == 'no_network':
         network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
     elif mapping_type == 'network':
-        network = AE(in_channels=1, out_channels=1, dims=Nx, n_downsample=2)
+        network = AE(in_channels=1, out_channels=1, dims=Nx, n_downsample=3)
     dataset = PCVox('../ImageDataset/bonefishes-1.png', domain_size=256)
-    basecase = Eiqonal(network, dataset, batch_size=1, fem_basis_deg=1, domain_size=Nx, domain_length=Nx, learning_rate=LR, mapping_type=mapping_type, loss_type='FDM')
+    basecase = Eiqonal(network, dataset, batch_size=1, fem_basis_deg=1, domain_size=Nx, domain_length=1.0, learning_rate=LR, mapping_type=mapping_type, loss_type='FEM')
 
     # ------------------------
     # 1 INIT TRAINER
