@@ -620,7 +620,7 @@ def main():
 
     lbfgs_switch = OptimSwitchLBFGS(epochs=opt_switch_epochs)
 
-    trainer = Trainer(gpus=[0],callbacks=[lbfgs_switch],
+    trainer = Trainer(gpus=[0],callbacks=[early_stopping,lbfgs_switch],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
         max_epochs=max_epochs, deterministic=True, profiler="simple", enable_progress_bar=enable_progress_bar)
 

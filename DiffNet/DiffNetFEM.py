@@ -247,13 +247,13 @@ class DiffNet2DFEM(DiffNetFEM):
             self.N_gp_surf.append(nn.Parameter(s_N_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
             self.dN_x_gp_surf.append(nn.Parameter(s_dN_x_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
             self.dN_y_gp_surf.append(nn.Parameter(s_dN_y_gp.unsqueeze(0).unsqueeze(1), requires_grad=False))
-        print("N_gp = ", self.N_gp)
-        print("N_gp_surf = ", self.N_gp_surf)
-        for i in range(4):
-            print("N_gp[{}] = \n".format(i), self.N_gp[i])
-        for i in range(2):
-            print("N_gp_surf[{}] = \n".format(i), self.N_gp_surf[i])
-        print("Nvalues_surf = \n", self.Nvalues_surf)
+        # print("N_gp = ", self.N_gp)
+        # print("N_gp_surf = ", self.N_gp_surf)
+        # for i in range(4):
+        #     print("N_gp[{}] = \n".format(i), self.N_gp[i])
+        # for i in range(2):
+        #     print("N_gp_surf[{}] = \n".format(i), self.N_gp_surf[i])
+        # print("Nvalues_surf = \n", self.Nvalues_surf)
 
         # print("xgp = ", self.xgp)
         # print("ygp = ", self.ygp)
