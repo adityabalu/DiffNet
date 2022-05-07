@@ -59,6 +59,10 @@ class DiffNetFEM(PDE):
             self.bf_1d_der = lambda x: np.array([0.5*(0.-1.), 0.5*(0.+1.)])
             self.bf_1d_der2 = lambda x: np.array([0.0, 0.0])
 
+            self.bf_1d_th = lambda x: torch.stack((0.5*(1.-x), 0.5*(1.+x)))
+            self.bf_1d_der_th = lambda x: torch.stack((0.5*(0.-torch.ones_like(x)), 0.5*(0.+torch.ones_like(x))))
+            self.bf_1d_der2_th = lambda x: np.array([torch.zeros_like(x), torch.zeros_like(x)])
+
         elif self.fem_basis_deg == 2:
             assert (self.domain_size- 1)%2 == 0
             self.nbf_1d = nbf_1d = 3
