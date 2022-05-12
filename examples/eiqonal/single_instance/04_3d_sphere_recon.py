@@ -193,7 +193,7 @@ class Eiqonal(DiffNet3DFEM):
         torch.stack([
             torch.stack([
                 u[b,0,nidx[b,0,:]*self.fem_basis_deg+d3,nidy[b,0,:]*self.fem_basis_deg+d2,nidz[b,0,:]*self.fem_basis_deg+d1] for b in range(u.size(0))])
-                for d1 in range(self.fem_basis_deg + 1) ]) for d2 in range(self.fem_basis_deg + 1)]) for d3 in range(self.fem_basis_deg + 1)]).unsqueeze(3)
+                for d3 in range(self.fem_basis_deg + 1) ]) for d2 in range(self.fem_basis_deg + 1)]) for d1 in range(self.fem_basis_deg + 1)]).unsqueeze(3)
 
         # print('* '* 10)
         # print(u_pts_grid.shape)
