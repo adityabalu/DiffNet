@@ -22,7 +22,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 seed_everything(42)
 
 import DiffNet
-from DiffNet.networks.autoencoders import AE
+from DiffNet.networks.immdiff_networks import ConvNet
 from DiffNet.DiffNetFEM import DiffNet2DFEM
 from DiffNet.DiffNetFDM import DiffNetFDM
 import PIL
@@ -100,17 +100,17 @@ class PCVox(data.Dataset):
         ny = np.divide(ny,(nx**2 + ny**2), out=np.zeros_like(ny), where=((nx**2 + ny**2)!=0))
 
         # bc1 will be source, sdf will be set to 0.5 at these locations
-        self.pc, self.normals = im2pc(img,nx,ny)
-        self.pc = self.pc/(img.shape[0])
+        # self.pc, self.normals = im2pc(img,nx,ny)
+        # self.pc = self.pc/(img.shape[0])
 
-        # pt_cloud = []
-        # for _ in range(1000):
-        #     vec = np.random.randn(2)
-        #     vec /= 4*np.linalg.norm(vec)
-        #     pt_cloud.append(vec)
-        # pt_cloud = np.array(pt_cloud)
-        # self.normals = pt_cloud*4.0
-        # self.pc = pt_cloud + 0.5
+        pt_cloud = []
+        for _ in range(1000):
+            vec = np.random.randn(2)
+            vec /= 4*np.linalg.norm(vec)
+            pt_cloud.append(vec)
+        pt_cloud = np.array(pt_cloud)
+        self.normals = pt_cloud*4.0
+        self.pc = pt_cloud + 0.5
 
         self.domain = np.ones((domain_size,domain_size))
         self.domain_size = domain_size
@@ -290,10 +290,10 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
             loss = 10*torch.norm(R1, 'fro') + 1000*sdf_recon_loss  + 5*reg_loss
         else:
             loss = 100*torch.norm(R1, 'fro') + 1000*sdf_recon_loss 
-        print()
-        print('R1:', torch.norm(R1, 'fro').item())
-        print('SDF loss:', sdf_recon_loss.item())
-        print('normals loss:', normals_loss.item())
+        # print()
+        # print('R1:', torch.norm(R1, 'fro').item())
+        # print('SDF loss:', sdf_recon_loss.item())
+        # print('normals loss:', normals_loss.item())
         return loss
 
     def forward(self, batch):
@@ -301,8 +301,10 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
         if self.mapping_type == 'no_network':
             return self.network[0], inputs_tensor, forcing_tensor
         elif self.mapping_type == 'network':
-            nu = inputs_tensor[:,0:1,:,:]
-            return self.network(nu), inputs_tensor, forcing_tensor
+            nu = inputs_tensor[:,0:1,:,:].squeeze(1)
+            # print(nu.shape)
+            # exit()
+            return self.network(nu).unsqueeze(1), inputs_tensor, forcing_tensor
 
     def configure_optimizers(self):
         """
@@ -449,14 +451,15 @@ def main():
     if mapping_type == 'no_network':
         network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
     elif mapping_type == 'network':
-        network = AE(in_channels=1, out_channels=1, dims=Nx, n_downsample=3)
-    dataset = PCVox('../ImageDataset/bonefishes-1.png', domain_size=256)
+        # network = AE(in_channels=1, out_channels=1, dims=Nx, n_downsample=1)
+        network = ConvNet(902, 256, [500 for i in range(6)], nonlin=torch.sin)
+    dataset = PCVox('./images/apple-2.png', domain_size=256)
     basecase = Eiqonal(network, dataset, batch_size=1, fem_basis_deg=1, domain_size=Nx, domain_length=1.0, learning_rate=LR, mapping_type=mapping_type, loss_type='FEM')
 
     # ------------------------
     # 1 INIT TRAINER
     # ------------------------
-    logger = pl.loggers.TensorBoardLogger('.', name="curve_reconstruction_final")
+    logger = pl.loggers.TensorBoardLogger('.', name="curve_reconstruction_apple")
     csv_logger = pl.loggers.CSVLogger(logger.save_dir, name=logger.name, version=logger.version)
 
     early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss',
@@ -467,7 +470,7 @@ def main():
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=2500, deterministic=True, profiler="simple")
+        max_epochs=500, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training
