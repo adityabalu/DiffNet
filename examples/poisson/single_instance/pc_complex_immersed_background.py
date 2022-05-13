@@ -196,7 +196,7 @@ class Poisson(DiffNet2DFEM):
         self.network.eval()
         inputs, forcing = self.dataset[0]
         u = self.do_query(inputs, forcing)
-        self.plot_contours(u)
+        self.plot_contours(u.squeeze().detach().cpu())
 
     def do_query(self, inputs, forcing):
         u, inputs_tensor, forcing_tensor = self.forward((inputs.unsqueeze(0).type_as(next(self.network.parameters())), forcing.unsqueeze(0).type_as(next(self.network.parameters()))))
@@ -215,7 +215,7 @@ class Poisson(DiffNet2DFEM):
         # nu = nu.squeeze().detach().cpu()
         # u = u.squeeze().detach().cpu()
 
-        return u.squeeze().detach().cpu()
+        return u
 
     def plot_contours(self, u):
         fig, axs = plt.subplots(1, 2, figsize=(2*2,1.2),
