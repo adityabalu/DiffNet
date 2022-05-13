@@ -27,6 +27,35 @@ import PIL
 from torch.utils import data
 import torchvision
 
+sys.path.append('/work/baskarg/bkhara/diffnet/examples/poisson/single_instance')
+from pc_complex_immersed_background import PCVox as PCVoxPoisson
+from pc_complex_immersed_background import Poisson
+
+def load_pc_normals_from_poisson():
+    version_id = 4
+    domain_size = 256
+    poisson_path = '/work/baskarg/bkhara/diffnet/examples/poisson/single_instance/'
+    cib_path = poisson_path + 'pc_complex_immersed_background/'
+    case_dir = cib_path + 'version_'+str(version_id)
+    # filename = 'bunny-18.png'
+    filename = poisson_path + 'bonefishes-1.png'
+    dataset = PCVoxPoisson(filename, domain_size=domain_size)
+    network = torch.load(os.path.join(case_dir, 'network.pt'))
+    equation = Poisson(network, dataset, batch_size=1, domain_size=domain_size)
+    # Query
+    inputs, forcing = equation.dataset[0:1]
+    up = equation.do_query(inputs, forcing)
+    pc = inputs[0:1,:,:].squeeze()
+    normals = inputs[1:2,:,:].squeeze()
+    u_pts, u_x_pts, u_y_pts = equation.loss_calc_inspect(up, inputs.unsqueeze(0), forcing.unsqueeze(0))
+    grad_vec = torch.stack((u_x_pts.detach().squeeze(), u_y_pts.detach().squeeze()), dim=0)
+    grad_vec = grad_vec.T
+    grad_mag = torch.sqrt(torch.sum(grad_vec**2, dim=1, keepdim=True))
+    grad_vec_unit = grad_vec/grad_mag
+    averaged_normals = np.load(os.path.join(poisson_path, 'renormal.npy'))
+    # return pc.numpy(), grad_vec_unit.numpy(), averaged_normals
+    return pc.numpy(), averaged_normals
+
 class OptimSwitchLBFGS(Callback):
     def __init__(self, epochs=50):
         self.switch_epoch = epochs
@@ -108,7 +137,8 @@ class PCVox(data.Dataset):
         nx = np.divide(nx,(nx**2 + ny**2), out=np.zeros_like(nx), where=((nx**2 + ny**2)!=0))
         ny = np.divide(ny,(nx**2 + ny**2), out=np.zeros_like(ny), where=((nx**2 + ny**2)!=0))
         # bc1 will be source, sdf will be set to 0.5 at these locations
-        self.pc, self.normals = im2pc(img,nx,ny)
+        self.pc, _ = im2pc(img,nx,ny)
+        _, self.normals = load_pc_normals_from_poisson()
         self.pc = self.pc/(img.shape[0])
         # pt_cloud = []
         # for _ in range(1000):
@@ -468,8 +498,8 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
         loss = torch.norm(R1, 'fro')
         loss = loss + sdf_recon_loss
         loss = loss + normals_loss
-        if self.current_epoch < 400: # TODO: make it better
-            loss = loss + 0.01*reg_loss
+        # if self.current_epoch < 400: # TODO: make it better
+        #     loss = loss + 0.01*reg_loss
         # print()
         # print('R1:', torch.norm(R1, 'fro').item())
         # print('SDF loss:', sdf_recon_loss.item())
