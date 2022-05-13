@@ -22,11 +22,14 @@ from pytorch_lightning.loggers import TensorBoardLogger
 seed_everything(42)
 
 import DiffNet
-from DiffNet.networks.autoencoders import AE
+from DiffNet.networks.immdiff_networks import ConvNet
 from DiffNet.DiffNetFEM import DiffNet2DFEM
 from DiffNet.DiffNetFDM import DiffNetFDM
 import PIL
 from torch.utils import data
+
+import torch
+from NURBSDiff.curve_eval import CurveEval
 
 
 
@@ -126,6 +129,8 @@ class PCVox(data.Dataset):
         forcing = np.ones_like(self.domain)
         return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
 
+    
+
 
 
 class Eiqonal(DiffNet2DFEM,DiffNetFDM):
@@ -144,73 +149,6 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
         Aglobal[:,0, 1:  , 1:  ] += Aloc_all[:,3, :, :]
         return Aglobal
 
-    def lossFDM(self, u, inputs_tensor, forcing_tensor):
-        f = forcing_tensor # renaming variable
-
-        # init bin widths
-        hx = self.h
-        hy = self.h
-
-        u_x = self.derivative_x(self.pad(u))
-        u_y = self.derivative_y(self.pad(u))
-
-        R1 = (u_x**2 + u_y**2) - 1.0
-
-
-        # extract diffusivity and boundary conditions here
-        pc = inputs_tensor[:,0:1,:,:].type_as(f)
-        normals = inputs_tensor[:,1:2,:,:].type_as(f)
-
-        # apply boundary conditions
-        nidx = (pc[:,:,:,0]/self.hx).type(torch.LongTensor).to(pc.device)
-        nidy = (pc[:,:,:,1]/self.hy).type(torch.LongTensor).to(pc.device)
-
-        u_pts_grid =  torch.stack([
-                torch.stack([
-                    torch.stack([u[b,0,nidx[b,0,:],nidy[b,0,:]] for b in range(u.size(0))]),
-                    torch.stack([u[b,0,nidx[b,0,:]+1,nidy[b,0,:]] for b in range(u.size(0))])]),
-                torch.stack([
-                    torch.stack([u[b,0,nidx[b,0,:],nidy[b,0,:]+1] for b in range(u.size(0))]),
-                    torch.stack([u[b,0,nidx[b,0,:]+1,nidy[b,0,:]+1] for b in range(u.size(0))])])
-                ]).unsqueeze(2)
-
-        x_pts = pc[:,:,:,0] - nidx.type_as(pc)*self.hx 
-        y_pts = pc[:,:,:,1] - nidy.type_as(pc)*self.hy
-
-        xi_pts = (x_pts*2)/self.hx - 1
-        eta_pts = (y_pts*2)/self.hy - 1
-
-        # print(xi_pts, eta_pts)
-
-        N_values_pts = self.bf_1d_th(xi_pts).unsqueeze(0)*self.bf_1d_th(eta_pts).unsqueeze(1)
-        dN_x_values_pts = self.bf_1d_der_th(xi_pts).unsqueeze(0)*self.bf_1d_th(eta_pts).unsqueeze(1)
-        dN_y_values_pts = self.bf_1d_th(xi_pts).unsqueeze(0)*self.bf_1d_der_th(eta_pts).unsqueeze(1)
-
-        u_pts = torch.sum(torch.sum(N_values_pts*u_pts_grid,0),0)
-        u_x_pts = torch.sum(torch.sum(dN_x_values_pts*u_pts_grid,0),0)
-        u_y_pts = torch.sum(torch.sum(dN_y_values_pts*u_pts_grid,0),0)
-
-        # Second loss - boundary loss
-        sdf_recon_loss = torch.sum(u_pts**2)
-
-        # Third loss - boundary reconstruction
-        normals_loss = torch.nn.functional.mse_loss(u_x_pts, normals[:,:,:,0], reduction='sum') + torch.nn.functional.mse_loss(u_y_pts, normals[:,:,:,1], reduction='sum')
-
-        # res_elmwise2 = JxW * normals
-        # res_elmwise2 = JxW * (normals_lhs - normals_rhs)
-        # Assemble 
-        # print('***'*10)
-        # print(torch.sum(res_elmwise1, 1).shape)
-        # print('***'*10)
-        # R1 = torch.zeros_like(u); R1 = self.Q1_vector_assembly(R1, torch.sum(res_elmwise1, 1))
-
-
-        # reg_loss = torch.exp(-100*(u_reg**2))
-        loss = torch.mean(R1**2) + sdf_recon_loss + normals_loss
-        # loss = torch.norm(R1, 'fro') + 1000*sdf_recon_loss + 10*normals_loss
-        # loss = torch.mean(res_elmwise1**2) + sdf_recon_loss
-        return loss
-
 
     def loss(self, u, inputs_tensor, forcing_tensor):
         f = forcing_tensor # renaming variable
@@ -223,20 +161,18 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
         N_values = self.Nvalues.type_as(u)
         gpw = self.gpw.type_as(u)
         
-        u_gp = self.gauss_pt_evaluation(u)
+        # u_gp = self.gauss_pt_evaluation(u)
         u_x_gp = self.gauss_pt_evaluation_der_x(u)
         u_y_gp = self.gauss_pt_evaluation_der_y(u)
 
-        # Eikonal Residual on the domain
+        # bin width (reimann sum)
         trnsfrm_jac = (0.5*hx)*(0.5*hy)
         JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
-        # eikonal_lhs = N_values*(u_x_gp**2 + u_y_gp**2)
-        # eikonal_rhs = 1.0
-        # res_elmwise1 = torch.sum(JxW * (eikonal_lhs), 2)# \nabla \phi - 1 = 0  JxW addresses discretization of domain
-        # R1 = torch.zeros_like(u); R1 = self.Q1_vector_assembly(R1, res_elmwise1)
-
-        R1 = torch.sum(u_x_gp**2 + u_y_gp**2, 2) - 1.0
-
+        
+        # Eikonal Equation
+        eikonal_lhs = (u_x_gp)**2 + (u_y_gp)**2
+        eikonal_rhs = self.h 
+        R1 = JxW * N_values * (eikonal_lhs - eikonal_rhs)
 
         # extract diffusivity and boundary conditions here
         pc = inputs_tensor[:,0:1,:,:].type_as(f)
@@ -261,39 +197,50 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
         xi_pts = (x_pts*2)/self.hx - 1
         eta_pts = (y_pts*2)/self.hy - 1
 
-        # print(xi_pts, eta_pts)
-
         N_values_pts = self.bf_1d_th(xi_pts).unsqueeze(0)*self.bf_1d_th(eta_pts).unsqueeze(1)
         dN_x_values_pts = self.bf_1d_der_th(xi_pts).unsqueeze(0)*self.bf_1d_th(eta_pts).unsqueeze(1)
         dN_y_values_pts = self.bf_1d_th(xi_pts).unsqueeze(0)*self.bf_1d_der_th(eta_pts).unsqueeze(1)
 
-        u_pts = torch.sum(torch.sum(N_values_pts*u_pts_grid,0),0)
+        u_pts = torch.sum(torch.sum(N_values_pts*u_pts_grid,0),0) # Field values at pc locations
         u_x_pts = torch.sum(torch.sum(dN_x_values_pts*u_pts_grid,0),0)
         u_y_pts = torch.sum(torch.sum(dN_y_values_pts*u_pts_grid,0),0)
 
+
+        # print('* '*10)
+        # print('u ', u.shape)
+        # print('R1 ', R1.shape)
+        # print('PC ', pc.shape)
+        # print('N_values_pts ', N_values_pts.shape)
+        # print('u_pts ', u_pts.shape)
+        # print('u_pts_grid ', u_pts_grid.shape)
+        # print('u_x_pts ', u_x_pts.shape)
+        # print('normals ', normals.shape)
+        # print('* '*10)
+
+        # exit()
         # Second loss - boundary loss
         sdf_recon_loss = torch.sum((u_pts - 0.0)**2)
 
         # Third loss - boundary reconstruction
         normals_loss = torch.nn.functional.mse_loss(u_x_pts, normals[:,:,:,0]) + torch.nn.functional.mse_loss(u_y_pts, normals[:,:,:,1])
 
-        # res_elmwise2 = JxW * normals
-        # res_elmwise2 = JxW * (normals_lhs - normals_rhs)
-        # Assemble 
-        # print('***'*10)
-        # print(torch.sum(res_elmwise1, 1).shape)
-        # print('***'*10)
-        # R1 = torch.zeros_like(u); R1 = self.Q1_vector_assembly(R1, torch.sum(res_elmwise1, 1))
+        R1 = torch.sum(R1, 1)
 
-        reg_loss = torch.exp(-100*(torch.abs(u)))
-        if self.current_epoch < 3:
-            loss = 10*torch.norm(R1, 'fro') + 1000*sdf_recon_loss  + 5*reg_loss
-        else:
-            loss = 100*torch.norm(R1, 'fro') + 1000*sdf_recon_loss 
-        print()
-        print('R1:', torch.norm(R1, 'fro').item())
-        print('SDF loss:', sdf_recon_loss.item())
-        print('normals loss:', normals_loss.item())
+        res_eikonal = torch.zeros_like(u); res_eikonal = self.Q1_vector_assembly(res_eikonal,R1)
+        # res_eikonal = torch.norm(res_eikonal, 'fro')
+        # res_eikonal = torch.sum(res_eikonal)
+
+        # reg_loss = torch.exp(-100*(torch.abs(u)))
+        # print('* '*10)
+        # # print(R1.shape)
+        # print(res_eikonal)
+        # print(sdf_recon_loss)
+        # print(normals_loss)
+        # print(reg_loss)
+        # print('* '*10)
+        # exit()
+
+        loss = res_eikonal + sdf_recon_loss + normals_loss
         return loss
 
     def forward(self, batch):
@@ -301,8 +248,8 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
         if self.mapping_type == 'no_network':
             return self.network[0], inputs_tensor, forcing_tensor
         elif self.mapping_type == 'network':
-            nu = inputs_tensor[:,0:1,:,:]
-            return self.network(nu), inputs_tensor, forcing_tensor
+            nu = inputs_tensor[:,0:1,:,:].squeeze(1)
+            return self.network(nu).unsqueeze(1), inputs_tensor, forcing_tensor
 
     def configure_optimizers(self):
         """
@@ -313,22 +260,13 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
         # opts = [torch.optim.Adam(self.network.parameters(), lr=lr)]
         return opts
 
-    def training_step(self, batch, batch_idx):
     # def training_step(self, batch, batch_idx):
-        u, inputs_tensor, forcing_tensor = self.forward(batch)
-        if self.loss_type == 'FEM':
-            loss_val = self.loss(u, inputs_tensor, forcing_tensor).mean()
-        elif self.loss_type == 'FDM':
-            loss_val = self.lossFDM(u, inputs_tensor, forcing_tensor).mean()
-        # loss_val = self.loss_resmin(u, inputs_tensor, forcing_tensor).mean()
-        # loss_val = self.loss_resmin_mass(u, inputs_tensor, forcing_tensor).mean()
-        # loss_val = self.loss_matvec(u, inputs_tensor, forcing_tensor).mean()
-        # self.log('PDE_loss', loss_val.item())
-        # self.log('loss', loss_val.item())
-        return {"loss": loss_val}
+    #     u, inputs_tensor, forcing_tensor = self.forward(batch)
+    #     loss_val = self.loss(u, inputs_tensor, forcing_tensor).mean()
+    #     return {"loss": loss_val}
 
     def on_epoch_end(self):
-        fig, axs = plt.subplots(1, 3, figsize=(2*7,4),
+        fig, axs = plt.subplots(1, 4, figsize=(2*7,4),
                             subplot_kw={'aspect': 'auto'}, sharex=True, sharey=True, squeeze=True)
         for ax in axs:
             ax.set_xticks([])
@@ -346,21 +284,22 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
         hy = self.h
 
         # init vars for weak formulation
-        N_values = self.Nvalues.type_as(f)
-        gpw = self.gpw.type_as(f)
+        N_values = self.Nvalues.type_as(u)
+        gpw = self.gpw.type_as(u)
         
-
-        u_gp = self.gauss_pt_evaluation(u)
+        # u_gp = self.gauss_pt_evaluation(u)
         u_x_gp = self.gauss_pt_evaluation_der_x(u)
         u_y_gp = self.gauss_pt_evaluation_der_y(u)
 
-        # Eikonal Residual on the domain
+        # bin width (reimann sum)
         trnsfrm_jac = (0.5*hx)*(0.5*hy)
         JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
-        eikonal_lhs = (u_x_gp**2 + u_y_gp**2)
-        eikonal_rhs = 1.0
-        res_elmwise1 = JxW * (eikonal_lhs)# \nabla \phi - 1 = 0  JxW addresses discretization of domain
-        R1 = torch.zeros_like(u); R1 = self.Q1_vector_assembly(R1, res_elmwise1)
+        
+        # Eikonal Equation
+        eikonal_lhs = (u_x_gp)**2 + (u_y_gp)**2
+        eikonal_rhs = self.h 
+        R1 = JxW * N_values * (eikonal_lhs - eikonal_rhs)
+
         # extract diffusivity and boundary conditions here
         pc = inputs_tensor[:,0:1,:,:].type_as(f)
         normals = inputs_tensor[:,1:2,:,:].type_as(f)
@@ -384,8 +323,6 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
         xi_pts = (x_pts*2)/self.hx - 1
         eta_pts = (y_pts*2)/self.hy - 1
 
-        # print(xi_pts, eta_pts)
-
         N_values_pts = self.bf_1d_th(xi_pts).unsqueeze(0)*self.bf_1d_th(eta_pts).unsqueeze(1)
         dN_x_values_pts = self.bf_1d_der_th(xi_pts).unsqueeze(0)*self.bf_1d_th(eta_pts).unsqueeze(1)
         dN_y_values_pts = self.bf_1d_th(xi_pts).unsqueeze(0)*self.bf_1d_der_th(eta_pts).unsqueeze(1)
@@ -395,68 +332,71 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
         u_y_pts = torch.sum(torch.sum(dN_y_values_pts*u_pts_grid,0),0)
 
         # Second loss - boundary loss
-        sdf_recon_loss = torch.sum(u_pts**2)
+        sdf_recon_loss = torch.sum((u_pts - 0.0)**2)
 
         # Third loss - boundary reconstruction
-        normals_loss = torch.sum((1.0 - (u_x_pts*normals[:,:,:,0] + u_y_pts*normals[:,:,:,1]))**2)
+        # normals_loss = torch.nn.functional.mse_loss(u_x_pts, normals[:,:,:,0]) + torch.nn.functional.mse_loss(u_y_pts, normals[:,:,:,1])
 
-        # res_elmwise2 = JxW * normals
-        # res_elmwise2 = JxW * (normals_lhs - normals_rhs)
-        # Assemble 
-        # print('***'*10)
-        # print(torch.sum(res_elmwise1, 1).shape)
-        # print('***'*10)
-        # R1 = torch.zeros_like(u); R1 = self.Q1_vector_assembly(R1, torch.sum(res_elmwise1, 1))
+        
+        res_eikonal = torch.zeros_like(u); res_eikonal = self.Q1_vector_assembly(res_eikonal,torch.sum(R1,1))
 
+        # print('* '*10)
+        # print('u ', u.shape)
+        # print('R1 ', R1.shape)
+        # print('PC ', pc.shape)
+        # print('N_values_pts ', N_values_pts.shape)
+        # print('u_pts ', u_pts.shape)
+        # print('u_pts_grid ', u_pts_grid.shape)
+        # print('u_x_pts ', u_x_pts.shape)
+        # print('normals ', normals.shape)
+        # print('res_eikonal ', res_eikonal.shape)
+        # print('* '*10)
+        # exit()
 
+        u_x_pts = u_x_pts.squeeze().detach().cpu()
+        u_y_pts = u_y_pts.squeeze().detach().cpu()
+        pc = pc.squeeze().detach().cpu()
+        normals = normals.squeeze().detach().cpu()
         u = u.squeeze().detach().cpu()
         # sdf_boundary_residual = sdf_boundary_residual.squeeze().detach().cpu()
-        R1 = R1.squeeze().detach().cpu()
+        res_eikonal = res_eikonal.squeeze().detach().cpu()
 
         im0 = axs[0].imshow(u,cmap='jet')
         fig.colorbar(im0, ax=axs[0])
         axs[0].set_title('u')
 
-        im1 = axs[1].imshow(R1, vmin=0, vmax=1, cmap='gray')
+        im1 = axs[1].imshow(res_eikonal, cmap='jet')
         fig.colorbar(im1, ax=axs[1])
-        axs[1].set_title('Eikonal residual')
+        axs[1].set_title('eik res')
 
-        im2 = axs[2].imshow(abs(u), cmap='jet')
-        fig.colorbar(im2, ax=axs[2])
-        axs[2].set_title('Unsigned Distance Field')
+        axs[2].quiver(pc[:,0], pc[:,-1], normals[:,0], normals[:,-1], angles='xy', scale_units='xy')
+        axs[2].set_title('True nrmls')
 
-        # im3 = axs[3].imshow(bc1,cmap='jet')
-        # fig.colorbar(im3, ax=axs[3])  
-        # axs[3].set_title('source')
+        axs[3].quiver(pc[:,0], pc[:,-1], u_x_pts[:], u_y_pts[:], angles='xy', scale_units='xy')
+        axs[3].set_title('Pred nrmls')
 
-        # im4 = axs[4].imshow(bc2,cmap='jet')
-        # fig.colorbar(im4, ax=axs[4])
-        # axs[4].set_title('nrmls x')
-
-        # im5 = axs[5].imshow(bc3,cmap='jet')
-        # fig.colorbar(im5, ax=axs[5])  
-        # axs[5].set_title('nrmls y')
 
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
 
 def main():
-    Nx = Ny = 256
+    Nx = Ny = 32
     LR=3e-4
     mapping_type = 'no_network'
     u_tensor = np.random.randn(1,1,Ny, Nx)
     if mapping_type == 'no_network':
         network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
     elif mapping_type == 'network':
-        network = AE(in_channels=1, out_channels=1, dims=Nx, n_downsample=3)
-    dataset = PCVox('../ImageDataset/bonefishes-1.png', domain_size=256)
+        # network = AE(in_channels=1, out_channels=1, dims=Nx, n_downsample=1)
+        network = ConvNet(902, 256, [500 for i in range(6)], nonlin=torch.sin)
+    dataset = PCVox('./images/bonefishes-1.png', domain_size=32)
     basecase = Eiqonal(network, dataset, batch_size=1, fem_basis_deg=1, domain_size=Nx, domain_length=1.0, learning_rate=LR, mapping_type=mapping_type, loss_type='FEM')
 
     # ------------------------
     # 1 INIT TRAINER
     # ------------------------
-    logger = pl.loggers.TensorBoardLogger('.', name="curve_reconstruction_final")
+    logger = pl.loggers.TensorBoardLogger('.', name="curve_reconstruction_32")
     csv_logger = pl.loggers.CSVLogger(logger.save_dir, name=logger.name, version=logger.version)
 
     early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss',
@@ -467,7 +407,7 @@ def main():
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=2500, deterministic=True, profiler="simple")
+        max_epochs=100, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training

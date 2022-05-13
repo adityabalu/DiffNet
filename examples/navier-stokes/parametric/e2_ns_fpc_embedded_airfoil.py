@@ -3,7 +3,9 @@ import sys
 import math
 import json
 import torch
+import PIL
 import numpy as np
+from tqdm import tqdm
 
 import scipy.io
 from scipy import ndimage
@@ -48,38 +50,98 @@ class OptimSwitchLBFGS(Callback):
                         ]
             trainer.optimizers = opts
 
-class NS_LDC_Dataset(data.Dataset):
+# class ImageIMBack(data.Dataset):
+#     'PyTorch dataset for sampling coefficients'
+#     def __init__(self, dirname, domain_size=64):
+#         """
+#         Initialization
+#         """
+#         filenames = os.listdir(dirname)
+#         self.dataset = []
+#         for fname in filenames:
+#             filename = os.path.join(dirname, fname)
+#             file, ext = os.path.splitext(filename)
+#             if ext in ['.png', '.jpg', '.bmp', '.tiff']:
+#                 img = PIL.Image.open(filename).convert('L')
+#                 # img = PIL.Image.open(filename).convert('L').resize((700, 300))
+#                 img = (np.asarray(img)>0).astype('float')
+#             else:
+#                 raise ValueError('invalid extension; extension not supported')
+#             domain = (1-img)
+
+#             # bc1 will be source, u will be set to 1 at these locations
+#             bc1 = np.zeros_like(domain)
+#             bc1[(1-domain).astype('bool')] = 1
+#             # bc2 will be sink, u will be set to 0 at these locations
+#             bc2 = np.zeros_like(domain)
+#             bc2[:,0] = 1
+#             bc2[:,-1] = 1
+#             bc2[0,:] = 1
+#             bc2[-1,:] = 1
+#             self.dataset.append(np.array([domain,bc1,bc2]))
+#         self.dataset = np.array(self.dataset)
+#         self.n_samples = self.dataset.shape[0]
+
+#     def __len__(self):
+#         'Denotes the total number of samples'
+#         return self.n_samples
+
+#     def __getitem__(self, index):
+#         'Generates one sample of data'
+#         inputs = self.dataset[index]
+#         forcing = np.zeros_like(self.dataset[index][0])
+#         return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
+
+class NS_FPC_Dataset(data.Dataset):
     'PyTorch dataset for Stokes_MMS_Dataset'
-    def __init__(self, domain_lengths=(1.,1.), domain_sizes=(32,32), Re=1):
+    def __init__(self, dirname, domain_lengths=(1.,1.), domain_sizes=(32,32), Re=1):
         """
         Initialization
         """
-
+        print("Initializing parametric dataset")
+        self.Re = Re
+        
         x = np.linspace(0, domain_lengths[0], domain_sizes[0])
         y = np.linspace(0, domain_lengths[1], domain_sizes[1])
 
         xx , yy = np.meshgrid(x, y)
         self.x = xx
         self.y = yy
-        # bc1 for fixed boundaries
-        self.bc1 = np.zeros_like(xx)
-        self.bc1[ 0, :] = 1.0
-        self.bc1[-1, :] = 1.0
-        self.bc1[ :, 0] = 1.0
-        self.bc1[ :,-1] = 1.0
+        
+        filenames = os.listdir(dirname)
+        self.dataset = []
+        for fname in tqdm(filenames):
+            filename = os.path.join(dirname, fname)
+            file, ext = os.path.splitext(filename)
+            if ext in ['.png', '.jpg', '.bmp', '.tiff']:
+                img = PIL.Image.open(filename).convert('L')
+                # img = PIL.Image.open(filename).convert('L').resize((700, 300))
+                img = (np.asarray(img)>0).astype('float')
+            else:
+                raise ValueError('invalid extension; extension not supported')
+            domain = (1-img)
 
-        self.bc2 = np.zeros_like(xx)
-        self.bc2[ 0, :] = 1.0
-        self.bc2[-1, :] = 1.0
-        self.bc2[ :, 0] = 1.0
-        self.bc2[ :,-1] = 1.0
+            # bc1 for fixed boundaries
+            bc1 = np.zeros_like(xx)
+            bc1[ 0, :] = 1.0
+            bc1[-1, :] = 1.0
+            bc1[ :, 0] = 1.0
+            # bc1[ :,-1] = 1.0
 
-        self.bc3 = np.zeros_like(xx)
-        self.bc3[0:1,0:1] = 1.0
+            bc2 = np.zeros_like(xx)
+            bc2[ 0, :] = 1.0
+            bc2[-1, :] = 1.0
+            bc2[ :, 0] = 1.0
+            # bc2[ :,-1] = 1.0
 
-        self.Re = Re
-        self.n_samples = 100
-        self.nu = np.random.normal(0,1.,size=(domain_sizes[1], domain_sizes[0]))
+            bc3 = np.zeros_like(xx)
+            # bc3[0:1,0:1] = 1.0
+
+            self.dataset.append(np.array([self.x, self.y, bc1, bc2, bc3, domain]))
+        
+        self.dataset = np.array(self.dataset)
+        self.n_samples = self.dataset.shape[0]
+        print("dataset size = ", self.dataset.shape)
 
     def __len__(self):
         'Denotes the total number of samples'
@@ -87,15 +149,18 @@ class NS_LDC_Dataset(data.Dataset):
 
     def __getitem__(self, index):
         'Generates one sample of data'
-        inputs = np.array([self.x, self.y, self.bc1, self.bc2, self.bc3, self.nu])
-
-        forcing = np.ones_like(self.x)*(1/self.Re)
+        inputs = self.dataset[index]
+        forcing = np.zeros_like(self.dataset[index][0])
+        # print("inputs = ", inputs)
+        # for ob in inputs:
+        #     print("ob = ", ob.shape)
+        # print("forcing = ", forcing)
         return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
 
-class NS_LDC(DiffNet2DFEM):
-    """docstring for NS_LDC"""
+class NS_FPC(DiffNet2DFEM):
+    """docstring for NS_FPC"""
     def __init__(self, network, dataset, **kwargs):
-        super(NS_LDC, self).__init__(network[0], dataset, **kwargs)
+        super(NS_FPC, self).__init__(network[0], dataset, **kwargs)
         self.mapping_type = kwargs.get('mapping_type', 'no_network')
         self.plot_frequency = kwargs.get('plot_frequency', 1)
 
@@ -116,7 +181,7 @@ class NS_LDC(DiffNet2DFEM):
         self.fx_gp = torch.FloatTensor(fx_gp)
         self.fy_gp = torch.FloatTensor(fy_gp)
 
-        u_bc = np.zeros_like(self.dataset.x); u_bc[-1,:] = 1. - 16. * (self.dataset.x[-1,:]-0.5)**4
+        u_bc = np.zeros_like(self.dataset.x); u_bc[:,0] = 1. - (2.*self.dataset.y[:,0] / self.domain_lengthY - 1.)**2; u_bc[0,:] = 0.; u_bc[-1,:] = 0.
         v_bc = np.zeros_like(self.dataset.x)
         p_bc = np.zeros_like(self.dataset.x)
 
@@ -124,22 +189,22 @@ class NS_LDC(DiffNet2DFEM):
         self.v_bc = torch.FloatTensor(v_bc)
         self.p_bc = torch.FloatTensor(p_bc)
 
-        numerical = np.loadtxt('ns-ldc-numerical-results/midline_cuts_Re100_regularized_128x128.txt', delimiter=",", skiprows=1)
-        self.midline_X = numerical[:,0]
-        self.midline_Y = numerical[:,0]
-        self.midline_U = numerical[:,1]
-        self.midline_V = numerical[:,2]
-        self.topline_P = numerical[:,3]
+        # numerical = np.loadtxt('ns-ldc-numerical-results/midline_cuts_Re100_regularized_128x128.txt', delimiter=",", skiprows=1)
+        # self.midline_X = numerical[:,0]
+        # self.midline_Y = numerical[:,0]
+        # self.midline_U = numerical[:,1]
+        # self.midline_V = numerical[:,2]
+        # self.topline_P = numerical[:,3]
 
     def exact_solution(self, x, y):
-        print("exact_solution -- LDC class called")
+        # print("exact_solution -- LDC class called")
         u_exact = np.zeros_like(x)
         v_exact = np.zeros_like(x)
         p_exact = np.zeros_like(x)
         return u_exact, v_exact, p_exact
 
     def forcing(self, x, y):
-        print("forcing -- LDC class called")
+        # print("forcing -- LDC class called")
         fx = np.zeros_like(x)
         fy = np.zeros_like(x)
         return fx, fy
@@ -203,7 +268,8 @@ class NS_LDC(DiffNet2DFEM):
         bc1 = inputs_tensor[:,2:3,:,:]
         bc2 = inputs_tensor[:,3:4,:,:]
         bc3 = inputs_tensor[:,4:5,:,:]
-        nu = inputs_tensor[:,5:6,:,:]
+        domain = inputs_tensor[:,5:6,:,:]
+        nu = domain * visco
 
         # DERIVE NECESSARY VALUES
         trnsfrm_jac = (0.5*hx)*(0.5*hy)
@@ -211,24 +277,26 @@ class NS_LDC(DiffNet2DFEM):
 
         # apply boundary conditions
         u_pred = torch.where(bc1>=0.5, u_bc, u_pred)
+        u_pred = torch.where(domain<0.5, domain, u_pred)
         v_pred = torch.where(bc2>=0.5, v_bc, v_pred)
-        p_pred = torch.where(bc3>=0.5, p_bc, p_pred)
+        v_pred = torch.where(domain<0.5, domain, v_pred)
+        # p_pred = torch.where(bc3>=0.5, p_bc, p_pred)
         # variable values at GP
-        u = self.gauss_pt_evaluation(u_pred)
-        v = self.gauss_pt_evaluation(v_pred)
-        p = self.gauss_pt_evaluation(p_pred)
+        u = (self.gauss_pt_evaluation(u_pred)).unsqueeze(1)
+        v = (self.gauss_pt_evaluation(v_pred)).unsqueeze(1)
+        p = (self.gauss_pt_evaluation(p_pred)).unsqueeze(1)
         # 1st derivatives at GP
-        p_x = self.gauss_pt_evaluation_der_x(p_pred)
-        p_y = self.gauss_pt_evaluation_der_y(p_pred)
-        u_x = self.gauss_pt_evaluation_der_x(u_pred)
-        u_y = self.gauss_pt_evaluation_der_y(u_pred)
-        v_x = self.gauss_pt_evaluation_der_x(v_pred)
-        v_y = self.gauss_pt_evaluation_der_y(v_pred)
+        p_x = (self.gauss_pt_evaluation_der_x(p_pred)).unsqueeze(1)
+        p_y = (self.gauss_pt_evaluation_der_y(p_pred)).unsqueeze(1)
+        u_x = (self.gauss_pt_evaluation_der_x(u_pred)).unsqueeze(1)
+        u_y = (self.gauss_pt_evaluation_der_y(u_pred)).unsqueeze(1)
+        v_x = (self.gauss_pt_evaluation_der_x(v_pred)).unsqueeze(1)
+        v_y = (self.gauss_pt_evaluation_der_y(v_pred)).unsqueeze(1)
         # 2nd derivatives at GP
-        u_xx = self.gauss_pt_evaluation_der2_x(u_pred)
-        u_yy = self.gauss_pt_evaluation_der2_y(u_pred)
-        v_xx = self.gauss_pt_evaluation_der2_x(v_pred)
-        v_yy = self.gauss_pt_evaluation_der2_y(v_pred)
+        u_xx = (self.gauss_pt_evaluation_der2_x(u_pred)).unsqueeze(1)
+        u_yy = (self.gauss_pt_evaluation_der2_y(u_pred)).unsqueeze(1)
+        v_xx = (self.gauss_pt_evaluation_der2_x(v_pred)).unsqueeze(1)
+        v_yy = (self.gauss_pt_evaluation_der2_y(v_pred)).unsqueeze(1)
         # convection terms
         adv1 = u*u_x + v*u_y
         adv2 = u*v_x + v*v_y        
@@ -245,6 +313,9 @@ class NS_LDC(DiffNet2DFEM):
 
         # CALCULATION STARTS
         # lhs
+        # print("N_values = ", N_values.shape)
+        # print("u_x = ", u_x.shape)
+        # exit()
         W_U1x = N_values*u_x
         W_U2y = N_values*v_y
         Wx_U1x = dN_x_values*u_x
@@ -302,8 +373,10 @@ class NS_LDC(DiffNet2DFEM):
 
         # add boundary conditions to R <---- this step is very important
         R1 = torch.where(bc1>=0.5, u_bc, R1)
+        R1 = torch.where(domain<0.5, domain, R1)
         R2 = torch.where(bc2>=0.5, v_bc, R2)
-        R3 = torch.where(bc3>=0.5, p_bc, R3)
+        R2 = torch.where(domain<0.5, domain, R2)
+        # R3 = torch.where(bc3>=0.5, p_bc, R3)
 
         return R1, R2, R3
 
@@ -317,8 +390,8 @@ class NS_LDC(DiffNet2DFEM):
         if self.mapping_type == 'no_network':
             return self.net_u[0], self.net_v[0], self.net_p[0], inputs_tensor, forcing_tensor
         elif self.mapping_type == 'network':
-            nu = inputs_tensor[:,5:6,:,:]
-            return self.net_u(nu), self.net_v(nu), self.net_p(nu), inputs_tensor, forcing_tensor
+            domain = inputs_tensor[:,5:6,:,:]
+            return self.net_u(domain), self.net_v(domain), self.net_p(domain), inputs_tensor, forcing_tensor
 
     def training_step(self, batch, batch_idx, optimizer_idx):
         u, v, p, inputs_tensor, forcing_tensor = self.forward(batch)
@@ -343,7 +416,8 @@ class NS_LDC(DiffNet2DFEM):
         self.net_u.eval()
         self.net_v.eval()
         self.net_p.eval()
-        inputs, forcing = self.dataset[0]
+        inputs, forcing = self.dataset[0:4]
+        domain = inputs[:,5,:,:].squeeze()
         u, v, p, u_x_gp, v_y_gp = self.do_query(inputs, forcing)
 
         u = u.squeeze().detach().cpu()
@@ -352,11 +426,20 @@ class NS_LDC(DiffNet2DFEM):
         u_x_gp = u_x_gp.squeeze().detach().cpu()
         v_y_gp = v_y_gp.squeeze().detach().cpu()
 
+        # if self.current_epoch % self.plot_frequency == 0:
+        #     self.plot_contours(u, v, p, u_x_gp, v_y_gp)
         if self.current_epoch % self.plot_frequency == 0:
-            self.plot_contours(u, v, p, u_x_gp, v_y_gp)
+            with open(os.path.join(self.logger[0].log_dir, "save_info.txt"), "a") as myfile:
+                myfile.write("Last save @ epoch {}\n".format(self.current_epoch))
+            # Save network
+            torch.save(self.net_u, os.path.join(self.logger[0].log_dir, 'net_u.pt'))
+            torch.save(self.net_v, os.path.join(self.logger[0].log_dir, 'net_v.pt'))
+            torch.save(self.net_p, os.path.join(self.logger[0].log_dir, 'net_p.pt'))
+            # plot contours
+            self.plot_contours(u, v, p, u_x_gp, v_y_gp, domain)
 
     def do_query(self, inputs, forcing):
-        u, v, p, inputs_tensor, forcing_tensor = self.forward((inputs.unsqueeze(0).type_as(next(self.net_u.parameters())), forcing.unsqueeze(0).type_as(next(self.net_u.parameters()))))
+        u, v, p, inputs_tensor, forcing_tensor = self.forward((inputs.type_as(next(self.net_u.parameters())), forcing.type_as(next(self.net_u.parameters()))))
 
         f = forcing_tensor # renaming variable
 
@@ -366,6 +449,7 @@ class NS_LDC(DiffNet2DFEM):
         bc1 = inputs_tensor[:,2:3,:,:]
         bc2 = inputs_tensor[:,3:4,:,:]
         bc3 = inputs_tensor[:,4:5,:,:]
+        domain = inputs_tensor[:,5:6,:,:]
 
         # apply boundary conditions
         u_bc = self.u_bc.unsqueeze(0).unsqueeze(0).type_as(u)
@@ -373,16 +457,19 @@ class NS_LDC(DiffNet2DFEM):
         p_bc = self.p_bc.unsqueeze(0).unsqueeze(0).type_as(u)
 
         u = torch.where(bc1>=0.5, u_bc, u)
+        u = torch.where(domain<0.5, domain, u)
         v = torch.where(bc2>=0.5, v_bc, v)
-        p = torch.where(bc3>=0.5, p_bc, p)
+        v = torch.where(domain<0.5, domain, v)
+        # p = torch.where(bc3>=0.5, p_bc, p)
 
         u_x_gp = self.gauss_pt_evaluation_der_x(u)
         v_y_gp = self.gauss_pt_evaluation_der_y(v)
 
         return u, v, p, u_x_gp, v_y_gp
 
-    def plot_contours(self, u, v, p, u_x_gp, v_y_gp):
-        fig, axs = plt.subplots(3, 3, figsize=(4*3,2.4*3),
+    def plot_contours(self, u, v, p, u_x_gp, v_y_gp, domain):
+        nsample = u.shape[0]
+        fig, axs = plt.subplots(nsample, 4, figsize=(4*nsample,2.4*4),
                             subplot_kw={'aspect': 'auto'}, squeeze=True)
 
         for i in range(axs.shape[0]-1):
@@ -395,33 +482,37 @@ class NS_LDC(DiffNet2DFEM):
         div_total = torch.sum(div_elmwise)
 
         interp_method = 'bilinear'
-        im0 = axs[0,0].imshow(u,cmap='jet', origin='lower', interpolation=interp_method)
-        fig.colorbar(im0, ax=axs[0,0]); axs[0,0].set_title(r'$u_x$')
-        im1 = axs[0,1].imshow(v,cmap='jet',origin='lower', interpolation=interp_method)
-        fig.colorbar(im1, ax=axs[0,1]); axs[0,1].set_title(r'$u_y$')
-        im2 = axs[0,2].imshow(p,cmap='jet',origin='lower', interpolation=interp_method)
-        fig.colorbar(im2, ax=axs[0,2]); axs[0,2].set_title(r'$p$')
+        d = domain
+        for i in range(nsample):
+            im0 = axs[i,0].imshow(d[i],cmap='jet',origin='lower',interpolation=interp_method); fig.colorbar(im0, ax=axs[i,0]); axs[i,0].set_title(r'$\Omega$')
+            im0 = axs[i,1].imshow(u[i],cmap='jet',origin='lower',interpolation=interp_method); fig.colorbar(im0, ax=axs[i,1]); axs[i,1].set_title(r'$u_x$')
+            im1 = axs[i,2].imshow(v[i],cmap='jet',origin='lower',interpolation=interp_method); fig.colorbar(im1, ax=axs[i,2]); axs[i,2].set_title(r'$u_y$')
+            im2 = axs[i,3].imshow(p[i],cmap='jet',origin='lower',interpolation=interp_method); fig.colorbar(im2, ax=axs[i,3]); axs[i,3].set_title(r'$p$')
 
-        im3 = axs[1,0].imshow(div_elmwise,cmap='jet',origin='lower', interpolation=interp_method)
-        fig.colorbar(im3, ax=axs[1,0]); axs[1,0].set_title(r'$\int(\nabla\cdot u) d\Omega = $' + '{:.3e}'.format(div_total.item()))
-        im4 = axs[1,1].imshow((u**2 + v**2)**0.5,cmap='jet',origin='lower', interpolation=interp_method)
-        fig.colorbar(im4, ax=axs[1,1]); axs[1,1].set_title(r'$\sqrt{u_x^2+u_y^2}$')
-        x = np.linspace(0, 1, self.domain_sizeX)
-        y = np.linspace(0, 1, self.domain_sizeY)
-        xx , yy = np.meshgrid(x, y)
-        im5 = axs[1,2].streamplot(xx, yy, u, v, color='k', cmap='jet'); axs[1,2].set_title("Streamlines")
+        # im3 = axs[1,0].imshow(div_elmwise,cmap='jet',origin='lower', interpolation=interp_method)
+        # fig.colorbar(im3, ax=axs[1,0]); axs[1,0].set_title(r'$\int(\nabla\cdot u) d\Omega = $' + '{:.3e}'.format(div_total.item()))
+        # im4 = axs[1,1].imshow((u**2 + v**2)**0.5,cmap='jet',origin='lower', interpolation=interp_method)
+        # fig.colorbar(im4, ax=axs[1,1]); axs[1,1].set_title(r'$\sqrt{u_x^2+u_y^2}$')
+        # x = np.linspace(0, 1, self.domain_sizeX)
+        # y = np.linspace(0, 1, self.domain_sizeY)
+        # xx , yy = np.meshgrid(x, y)
+        # im5 = axs[1,2].streamplot(xx, yy, u, v, color='k', cmap='jet'); axs[1,2].set_title("Streamlines")
 
-        mid_idxX = int(self.domain_sizeX/2)
-        mid_idxY = int(self.domain_sizeY/2)
-        im = axs[2,0].plot(self.dataset.y[:,mid_idxX], u[:,mid_idxX],label='DiffNet')
-        im = axs[2,0].plot(self.midline_Y,self.midline_U,label='Numerical')
-        axs[2,0].set_xlabel('y'); axs[2,0].legend(); axs[2,0].set_title(r'$u_x @ x=0.5$')
-        im = axs[2,1].plot(self.dataset.x[mid_idxY,:], v[mid_idxY,:],label='DiffNet')
-        im = axs[2,1].plot(self.midline_X,self.midline_V,label='Numerical')
-        axs[2,1].set_xlabel('x'); axs[2,1].legend(); axs[2,1].set_title(r'$u_y @ y=0.5$')
-        im = axs[2,2].plot(self.dataset.x[-1,:], p[-1,:],label='DiffNet')
-        im = axs[2,2].plot(self.midline_X,self.topline_P,label='Numerical')
-        axs[2,2].set_xlabel('x'); axs[2,2].legend(); axs[2,2].set_title(r'$p @ y=1.0$')
+        # im0 = axs[2,0].imshow(domain,cmap='jet', origin='lower', interpolation=interp_method)
+        # fig.colorbar(im0, ax=axs[2,0]); axs[2,0].set_title(r'$\Omega$')
+        # im = axs[2,1].plot(self.dataset.y[:,0], u[:,0],label='Inlet')
+
+        # mid_idxX = int(self.domain_sizeX/2)
+        # mid_idxY = int(self.domain_sizeY/2)
+        # im = axs[2,0].plot(self.dataset.y[:,mid_idxX], u[:,mid_idxX],label='DiffNet')
+        # im = axs[2,0].plot(self.midline_Y,self.midline_U,label='Numerical')
+        # axs[2,0].set_xlabel('y'); axs[2,0].legend(); axs[2,0].set_title(r'$u_x @ x=0.5$')
+        # im = axs[2,1].plot(self.dataset.x[mid_idxY,:], v[mid_idxY,:],label='DiffNet')
+        # im = axs[2,1].plot(self.midline_X,self.midline_V,label='Numerical')
+        # axs[2,1].set_xlabel('x'); axs[2,1].legend(); axs[2,1].set_title(r'$u_y @ y=0.5$')
+        # im = axs[2,2].plot(self.dataset.x[-1,:], p[-1,:],label='DiffNet')
+        # im = axs[2,2].plot(self.midline_X,self.topline_P,label='Numerical')
+        # axs[2,2].set_xlabel('x'); axs[2,2].legend(); axs[2,2].set_title(r'$p @ y=1.0$')
 
         fig.suptitle("Re = {:.1f}, Nx = {}, Ny = {}, LR = {:.1e}, epochs = {}, mapping_type = {}".format(self.Re, self.domain_sizeX, self.domain_sizeY, self.learning_rate, self.current_epoch, self.mapping_type), fontsize=12)
 
@@ -430,30 +521,38 @@ class NS_LDC(DiffNet2DFEM):
         plt.close('all')
 
 def main():
+    image_dataset_dir = "../AirfoilFPC-256x128"
+    # image_dataset_dir = "../mock-dataset-fpc"
     # mapping_type = 'no_network'
     mapping_type = 'network'
-    lx = 1.
-    ly = 1.
-    Nx = 64
-    Ny = 64
-    domain_size = 64
-    Re = 100.
-    dir_string = "ns_ldc"
-    max_epochs = 1001
-    plot_frequency = 5
-    LR = 5e-4
+    lx = 5.
+    ly = 12.
+    Nx = 256
+    Ny = 128
+    domain_size = 128
+    Re = 1.
+    dir_string = "ns_fpc_af"
+    max_epochs = 50001
+    plot_frequency = 1
+    LR = 2e-4
     opt_switch_epochs = max_epochs
     load_from_prev = False
     load_version_id = 37
+
+    enable_progress_bar = True
+    print("argv = ", sys.argv)
+    if len(sys.argv) > 1:
+        enable_progress_bar = bool(int(sys.argv[1]))
+        print("enable_progress_bar = ", enable_progress_bar)
 
     x = np.linspace(0, 1, Nx)
     y = np.linspace(0, 1, Ny)
     xx , yy = np.meshgrid(x, y)
 
-    dataset = NS_LDC_Dataset(domain_lengths=(lx,ly), domain_sizes=(Nx,Ny), Re=Re)
+    dataset = NS_FPC_Dataset(dirname=image_dataset_dir, domain_lengths=(lx,ly), domain_sizes=(Nx,Ny), Re=Re)
     if load_from_prev:
         print("LOADING FROM PREVIOUS VERSION: ", load_version_id)
-        case_dir = './ns_ldc/version_'+str(load_version_id)
+        case_dir = './ns_fpc_af/version_'+str(load_version_id)
         net_u = torch.load(os.path.join(case_dir, 'net_u.pt'))
         net_v = torch.load(os.path.join(case_dir, 'net_v.pt'))
         net_p = torch.load(os.path.join(case_dir, 'net_p.pt'))
@@ -470,11 +569,11 @@ def main():
             net_v = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor[:,1:2,:,:]), requires_grad=True)])
             net_p = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor[:,2:3,:,:]), requires_grad=True)])
         elif mapping_type == 'network':
-            net_u = AE(in_channels=1, out_channels=1, dims=domain_size, n_downsample=3)
-            net_v = AE(in_channels=1, out_channels=1, dims=domain_size, n_downsample=3)
-            net_p = AE(in_channels=1, out_channels=1, dims=domain_size, n_downsample=3)
+            net_u = AE(in_channels=1, out_channels=1, dims=Ny, n_downsample=3)
+            net_v = AE(in_channels=1, out_channels=1, dims=Ny, n_downsample=3)
+            net_p = AE(in_channels=1, out_channels=1, dims=Ny, n_downsample=3)
     network = (net_u, net_v, net_p)
-    basecase = NS_LDC(network, dataset, domain_lengths=(lx,ly), domain_sizes=(Nx,Ny), batch_size=1, fem_basis_deg=1, learning_rate=LR, plot_frequency=plot_frequency, mapping_type=mapping_type)
+    basecase = NS_FPC(network, dataset, domain_lengths=(lx,ly), domain_sizes=(Nx,Ny), batch_size=32, fem_basis_deg=1, learning_rate=LR, plot_frequency=plot_frequency, mapping_type=mapping_type)
 
     # Initialize trainer
     logger = pl.loggers.TensorBoardLogger('.', name=dir_string)
@@ -495,9 +594,9 @@ def main():
     # Training
     trainer.fit(basecase)
     # Save network
-    torch.save(basecase.net_u, os.path.join(logger.log_dir, 'net_u.pt'))
-    torch.save(basecase.net_v, os.path.join(logger.log_dir, 'net_v.pt'))
-    torch.save(basecase.net_p, os.path.join(logger.log_dir, 'net_p.pt'))
+    torch.save(basecase.net_u, os.path.join(logger.log_dir, 'net_u_detached.pt'))
+    torch.save(basecase.net_v, os.path.join(logger.log_dir, 'net_v_detached.pt'))
+    torch.save(basecase.net_p, os.path.join(logger.log_dir, 'net_p_detached.pt'))
 
 
 if __name__ == '__main__':
