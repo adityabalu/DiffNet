@@ -30,6 +30,8 @@ from torch.utils import data
 import torch
 from NURBSDiff.curve_eval import CurveEval
 
+from torchvision.utils import make_grid
+
 
 
 
@@ -83,7 +85,7 @@ class PC3D(data.Dataset):
         Initialization
         """
         pt_cloud = []
-        for _ in range(25000):
+        for _ in range(10000):
             vec = np.random.randn(3)
             vec /= 4*np.linalg.norm(vec)
             pt_cloud.append(vec)
@@ -193,7 +195,7 @@ class Eiqonal(DiffNet3DFEM):
         torch.stack([
         torch.stack([
             torch.stack([
-                u[b,0,nidx[b,0,:]*self.fem_basis_deg+d3,nidy[b,0,:]*self.fem_basis_deg+d2,nidz[b,0,:]*self.fem_basis_deg+d1] for b in range(u.size(0))])
+                u[b,0,nidz[b,0,:]*self.fem_basis_deg+d3,nidy[b,0,:]*self.fem_basis_deg+d2,nidx[b,0,:]*self.fem_basis_deg+d1] for b in range(u.size(0))])
                 for d1 in range(self.fem_basis_deg + 1) ]) for d2 in range(self.fem_basis_deg + 1)]) for d3 in range(self.fem_basis_deg + 1)]).unsqueeze(3)
 
         # print('* '* 10)
@@ -288,11 +290,12 @@ class Eiqonal(DiffNet3DFEM):
         u_z_gp = self.gauss_pt_evaluation_der_z(u)
 
         # Eikonal Residual on the domain
-        trnsfrm_jac = (0.5*hx)*(0.5*hy)
+        trnsfrm_jac = (0.5*hx)*(0.5*hy)*(0.5*hz)
         JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
 
         # First loss - eikonal eqn ie   grad(u) = 1
         eikonal_lhs = tau*u_gp*(dN_x_values*u_x_gp + dN_y_values*u_y_gp + dN_z_values*u_z_gp) + (1+tau)*N_values*(u_x_gp**2+u_y_gp**2+u_z_gp**2)
+        # eikonal_lhs = N_values*(u_x_gp**2+u_y_gp**2+u_z_gp**2)
         eikonal_rhs = N_values * 1.0 
 
         res_elmwise1 = JxW * (eikonal_lhs - eikonal_rhs) # \nabla \phi - 1 = 0  JxW addresses discretization of domain        
@@ -315,11 +318,31 @@ class Eiqonal(DiffNet3DFEM):
         #             torch.stack([u[b,0,nidx[b,0,:]+1,nidy[b,0,:]+1] for b in range(u.size(0))])])
         #         ]).unsqueeze(2)
 
+
+
+        # u_pts_grid =  torch.stack([
+        # torch.stack([
+        #         torch.stack([
+        #             torch.stack([u[b,0,nidx[b,0,:],nidy[b,0,:], nidz[b,0,:]] for b in range(u.size(0))]),
+        #             torch.stack([u[b,0,nidx[b,0,:]+1,nidy[b,0,:],nidz[b,0,:]] for b in range(u.size(0))])]),
+        #         torch.stack([
+        #             torch.stack([u[b,0,nidx[b,0,:],nidy[b,0,:]+1,nidz[b,0,:]] for b in range(u.size(0))]),
+        #             torch.stack([u[b,0,nidx[b,0,:]+1,nidy[b,0,:]+1,nidz[b,0,:]] for b in range(u.size(0))])])
+        #         ])
+        #         torch.stack([
+        #         torch.stack([
+        #             torch.stack([u[b,0,nidx[b,0,:],nidy[b,0,:],nidz[b,0,:]+1] for b in range(u.size(0))]),
+        #             torch.stack([u[b,0,nidx[b,0,:]+1,nidy[b,0,:],nidz[b,0,:]+1] for b in range(u.size(0))])]),
+        #         torch.stack([
+        #             torch.stack([u[b,0,nidx[b,0,:],nidy[b,0,:]+1,nidz[b,0,:]+1] for b in range(u.size(0))]),
+        #             torch.stack([u[b,0,nidx[b,0,:]+1,nidy[b,0,:]+1,nidz[b,0,:]+1] for b in range(u.size(0))])])
+        #         ]).unsqueeze(2)
+
         u_pts_grid =  torch.stack([
         torch.stack([
         torch.stack([
             torch.stack([
-                u[b,0,nidx[b,0,:]*self.fem_basis_deg+d3,nidy[b,0,:]*self.fem_basis_deg+d2,nidz[b,0,:]*self.fem_basis_deg+d1] for b in range(u.size(0))])
+                u[b,0,nidz[b,0,:]*self.fem_basis_deg+d3,nidy[b,0,:]*self.fem_basis_deg+d2,nidx[b,0,:]*self.fem_basis_deg+d1] for b in range(u.size(0))])
                 for d1 in range(self.fem_basis_deg + 1) ]) for d2 in range(self.fem_basis_deg + 1)]) for d3 in range(self.fem_basis_deg + 1)]).unsqueeze(3)
         
         
@@ -383,16 +406,16 @@ class Eiqonal(DiffNet3DFEM):
         self.domain_loss = R1.detach().squeeze().cpu().clone()
 
         loss = torch.norm(R1, 'fro')
-        loss = loss + 4*sdf_recon_loss
-        loss = loss + 2*normals_loss
+        loss = loss + sdf_recon_loss
+        loss = loss + normals_loss
 
 
-        if self.current_epoch % 5 == 0:
-            print('* '*19)
-            print('Eikonal loss ', torch.norm(R1, 'fro'))
-            print('sdf recon    ', sdf_recon_loss)
-            print('normals      ', normals_loss)
-            print('* '*19)
+        # if self.current_epoch % 5 == 0:
+        #     print('* '*19)
+        #     print('Eikonal loss ', torch.norm(R1, 'fro'))
+        #     print('sdf recon    ', sdf_recon_loss)
+        #     print('normals      ', normals_loss)
+        #     print('* '*19)
         # if self.current_epoch < 25: # TODO: make it better
         #     loss = loss + 0.01*reg_loss
         # print()
@@ -520,7 +543,7 @@ class Eiqonal(DiffNet3DFEM):
         # pc = pc.squeeze().detach().cpu()
         # normals = normals.squeeze().detach().cpu()
         u = u.squeeze().detach().cpu()
-        # print(u.shape)
+        # print(type(u))
         # exit()
         # sdf_boundary_residual = sdf_boundary_residual.squeeze().detach().cpu()
         # res_eikonal = res_eikonal.squeeze().detach().cpu()
@@ -539,42 +562,61 @@ class Eiqonal(DiffNet3DFEM):
         # axs[3].quiver(pc[:,0], pc[:,-1], u_x_pts[:], u_y_pts[:], angles='xy', scale_units='xy')
         # axs[3].set_title('Pred nrmls')
 
-        fig, axs = plt.subplots(1, 3, figsize=(6,6),
+        fig, axs = plt.subplots(8,4, figsize=(6,6),
                             subplot_kw={'aspect': 'auto'}, sharex=True, sharey=True, squeeze=True)
-        # for ax_row in axs:
-        #     for ax in ax_row:
-        #         ax.set_xticks([])
-        #         ax.set_yticks([])
+        for ax_row in axs:
+            for ax in ax_row:
+                ax.set_xticks([])
+                ax.set_yticks([])
+        # grid = make_grid([dog1_int, dog2_int, dog1_int, dog2_int])
+        # show(grid)
+        # x = [u[i,:,:] for i in range(32)]
+        # print(x[0].shape)
+        
+        # print(len(x))
+        # exit()
 
-        for ax in axs:
-           ax.set_xticks([])
-           ax.set_yticks([])
+        # fig = make_grid([u[i,:,:].float() for i in range(32)])
+        
+
+        # for ax in axs:
+        #    ax.set_xticks([])
+        #    ax.set_yticks([])
+        i = 0
+        for row in range(8):
+            for column in range(4):
+                im = axs[row,column].imshow(u[i,:,:],cmap='jet'); fig.colorbar(im,ax=axs[row,column])
+                i+=1
 
 
-        row_id = 0
-        sliceZ = int(self.domain_size / 2)
-        im = axs[row_id].imshow(u[sliceZ,:,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id]) #ticks=[0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]
-        # im = axs[row_id,1].imshow(u[sliceZ,:,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,1])
-        # im = axs[row_id,2].imshow(u_exact[sliceZ,:,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,2])
-        # im = axs[row_id,3].imshow(diff[sliceZ,:,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,3])
-        # y-slices
-        row_id = 1
-        sliceY = int(self.domain_size / 2)
-        im = axs[row_id].imshow(u[:,sliceY,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id]) #ticks=[0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]
-        # im = axs[row_id,1].imshow(u[:,sliceY,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,1])
-        # im = axs[row_id,2].imshow(u_exact[:,sliceY,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,2])
-        # im = axs[row_id,3].imshow(diff[:,sliceY,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,3])
-        # # x-slices
-        row_id = 2
-        sliceX = int(self.domain_size / 2)
-        im = axs[row_id].imshow(u[:,:,sliceX],cmap='jet'); fig.colorbar(im, ax=axs[row_id]) #ticks=[0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]
+        # row_id = 0
+        # sliceZ = int(self.domain_size / 2)
+        # im = axs[row_id].imshow(u[sliceZ,:,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id]) #ticks=[0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]
+        # # im = axs[row_id,1].imshow(u[sliceZ,:,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,1])
+        # # im = axs[row_id,2].imshow(u_exact[sliceZ,:,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,2])
+        # # im = axs[row_id,3].imshow(diff[sliceZ,:,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,3])
+        # # y-slices
+        # row_id = 1
+        # sliceY = int(self.domain_size / 2)
+        # im = axs[row_id].imshow(u[:,sliceY,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id]) #ticks=[0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]
+        # # im = axs[row_id,1].imshow(u[:,sliceY,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,1])
+        # # im = axs[row_id,2].imshow(u_exact[:,sliceY,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,2])
+        # # im = axs[row_id,3].imshow(diff[:,sliceY,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,3])
+        # # # x-slices
+        # row_id = 2
+        # sliceX = int(self.domain_size / 2)
+        # im = axs[row_id].imshow(u[:,:,sliceX],cmap='jet'); fig.colorbar(im, ax=axs[row_id]) #ticks=[0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]
         # im = axs[row_id,1].imshow(u[:,:,sliceX],cmap='jet'); fig.colorbar(im, ax=axs[row_id,1])
         # im = axs[row_id,2].imshow(u_exact[:,:,sliceX],cmap='jet'); fig.colorbar(im, ax=axs[row_id,2])
         # im = axs[row_id,3].imshow(diff[:,:,sliceX],cmap='jet'); fig.colorbar(im, ax=axs[row_id,3])
 
         plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
+        # self.logger[0].experiment.add_image('images', fig, 0)
         plt.close('all')
+
+        # fig = plt.figure()
+        # ax = plt.axes(projection='3d')
 
 
         # plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
@@ -608,7 +650,7 @@ def main():
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=500, deterministic=True, profiler="simple")
+        max_epochs=100, deterministic=True, profiler="simple")
 
     # ------------------------
     # 4 Training
