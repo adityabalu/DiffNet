@@ -6,7 +6,7 @@ import numpy as np
 import scipy.io
 from scipy import ndimage
 import matplotlib
-from skimage import io
+# from skimage import io
 # matplotlib.use("pgf")
 matplotlib.rcParams.update({
     # 'font.family': 'serif',
@@ -25,7 +25,7 @@ from DiffNet.DiffNetFEM import DiffNet2DFEM
 from DiffNet.DiffNetFDM import DiffNetFDM
 import PIL
 from torch.utils import data
-import torchvision
+# import torchvision
 
 sys.path.append('/work/baskarg/bkhara/diffnet/examples/poisson/single_instance')
 from pc_complex_immersed_background import PCVox as PCVoxPoisson
@@ -55,6 +55,23 @@ def load_pc_normals_from_poisson():
     averaged_normals = np.load(os.path.join(poisson_path, 'renormal.npy'))
     # return pc.numpy(), grad_vec_unit.numpy(), averaged_normals
     return pc.numpy(), averaged_normals
+
+def load_pc_normals_from_file():
+    pc = np.load('./point_cloud.npz')
+    pc = pc['arr_0']
+    normals = np.load('normals.npz')
+    normals = normals['arr_0']
+
+    alpha = 0.3
+    pc[:,:,0] = (pc[:,:,0])*alpha + 0.5*(1-alpha)
+    pc[:,:,1] = (pc[:,:,1])*alpha + 0.5
+    normals = normals[:,:,0:2]
+    # pick one set
+    idx = 0
+    pc = pc[idx,:,:]
+    normals = normals[idx,:,:]
+    print("pc, normals shape = ", pc.shape, normals.shape)
+    return pc, normals
 
 class OptimSwitchLBFGS(Callback):
     def __init__(self, epochs=50):
@@ -137,9 +154,10 @@ class PCVox(data.Dataset):
         nx = np.divide(nx,(nx**2 + ny**2), out=np.zeros_like(nx), where=((nx**2 + ny**2)!=0))
         ny = np.divide(ny,(nx**2 + ny**2), out=np.zeros_like(ny), where=((nx**2 + ny**2)!=0))
         # bc1 will be source, sdf will be set to 0.5 at these locations
-        self.pc, _ = im2pc(img,nx,ny)
-        _, self.normals = load_pc_normals_from_poisson()
-        self.pc = self.pc/(img.shape[0])
+        # self.pc, _ = im2pc(img,nx,ny)
+        # _, self.normals = load_pc_normals_from_poisson()
+        # self.pc = self.pc/(img.shape[0])
+        self.pc, self.normals = load_pc_normals_from_file()
         # pt_cloud = []
         # for _ in range(1000):
         #     vec = np.random.randn(2)
@@ -624,7 +642,7 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
 def main():
     Nx = Ny = 256 # equal
     LR=3e-4
-    max_epochs = 1
+    max_epochs = 10000
     save_frequency = 25
     opt_switch_epochs = max_epochs
     domain_size = Nx
