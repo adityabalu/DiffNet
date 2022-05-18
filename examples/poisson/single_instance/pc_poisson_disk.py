@@ -67,11 +67,27 @@ def im2pc(image, nx, ny):
                     normals.append([nx[i,j]/(nx[i,j]**2 + ny[i,j]**2), ny[i,j]/(nx[i,j]**2 + ny[i,j]**2)])
     return np.array(pc), np.array(normals)
 
-def load_pc():
-    data = np.loadtxt('./airfoil-e864/e864.dat')
-    data[:,0] = data[:,0]*0.5 + 0.3
-    data[:,1] = data[:,1] + 0.5
-    return data
+def calc_pc_uniform_circle():
+    theta = np.linspace(0,2*np.pi,101,endpoint=False)
+    radius = 0.25
+    x = radius*np.cos(theta)
+    y = radius*np.sin(theta)
+    pc = np.hstack((x[:,np.newaxis],y[:,np.newaxis]))
+    normals = pc/radius
+
+    # shift the point cloud to centre of the domain
+    pc = pc + 0.5
+
+    # pt_cloud = []
+    # for _ in range(1000):
+    #     vec = np.random.randn(2)
+    #     vec /= 4*np.linalg.norm(vec)
+    #     pt_cloud.append(vec)
+    # pt_cloud = np.array(pt_cloud)
+    # self.normals = pt_cloud*4.0
+    # self.pc = pt_cloud + 0.5
+    return pc, normals
+
 
 class PCVox(data.Dataset):
     'PyTorch dataset for PCVox'
@@ -99,9 +115,11 @@ class PCVox(data.Dataset):
         ny = np.divide(ny,(nx**2 + ny**2), out=np.zeros_like(ny), where=((nx**2 + ny**2)!=0))
 
         # bc1 will be source, sdf will be set to 0.5 at these locations
-        self.pc, self.normals = im2pc(img,nx,ny)
-        self.pc = self.pc/(img.shape[0])
-        self.pc = load_pc()
+        # self.pc, self.normals = im2pc(img,nx,ny)
+        # self.pc = self.pc/(img.shape[0])
+
+        self.pc, self.normals = calc_pc_uniform_circle()
+        
         self.domain = np.ones((domain_size,domain_size))
         self.domain_size = domain_size
         self.n_samples = 100
@@ -112,7 +130,7 @@ class PCVox(data.Dataset):
 
     def __getitem__(self, index):
         'Generates one sample of data'
-        inputs = np.array([self.pc, self.pc]) # 2, Npoint, 2
+        inputs = np.array([self.pc, self.normals]) # 2, Npoint, 2
         forcing = np.ones_like(self.domain)
         return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
 
@@ -248,7 +266,7 @@ def main():
     # ------------------------
     # 1 INIT TRAINER
     # ------------------------
-    logger = pl.loggers.TensorBoardLogger('.', name="pc_complex_immersed_background")
+    logger = pl.loggers.TensorBoardLogger('.', name="pc_poisson_disk")
     csv_logger = pl.loggers.CSVLogger(logger.save_dir, name=logger.name, version=logger.version)
 
     early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss',
