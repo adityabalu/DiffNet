@@ -19,6 +19,7 @@ seed_everything(42)
 
 import DiffNet
 from DiffNet.networks.wgan import GoodNetwork
+from DiffNet.networks.unets import UNet
 from DiffNet.DiffNetFEM import DiffNet2DFEM
 from DiffNet.datasets.parametric.images import ImageIMBack
 
@@ -129,9 +130,17 @@ class Poisson(DiffNet2DFEM):
         plt.close('all')
 
 def main():
-    dirname = '../ImageDataset'
+    load_from_prev = False
+    # dirname = '../ImageDataset'
+    dirname = '../AirfoilImageSet'
+    load_prev_path = './complex_immersed_background/version_59'
     dataset = ImageIMBack(dirname, domain_size=256)
-    network = GoodNetwork(in_channels=2, out_channels=1, in_dim=64, out_dim=64)
+
+    if load_from_prev:
+        network = torch.load(os.path.join(load_prev_path, 'network.pt'))
+    else:
+        # network = GoodNetwork(in_channels=2, out_channels=1, in_dim=64, out_dim=64)
+        network = UNet(in_channels=2, out_channels=1)
     basecase = Poisson(network, dataset, batch_size=16, domain_size=256)
 
     # ------------------------
