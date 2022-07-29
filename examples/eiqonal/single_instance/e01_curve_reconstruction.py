@@ -27,34 +27,34 @@ import PIL
 from torch.utils import data
 # import torchvision
 
-sys.path.append('/work/baskarg/bkhara/diffnet/examples/poisson/single_instance')
-from pc_complex_immersed_background import PCVox as PCVoxPoisson
-from pc_complex_immersed_background import Poisson
+# sys.path.append('/work/baskarg/bkhara/diffnet/examples/poisson/single_instance')
+# from pc_complex_immersed_background import PCVox as PCVoxPoisson
+# from pc_complex_immersed_background import Poisson
 
-def load_pc_normals_from_poisson():
-    version_id = 4
-    domain_size = 256
-    poisson_path = '/work/baskarg/bkhara/diffnet/examples/poisson/single_instance/'
-    cib_path = poisson_path + 'pc_complex_immersed_background/'
-    case_dir = cib_path + 'version_'+str(version_id)
-    # filename = 'bunny-18.png'
-    filename = poisson_path + 'bonefishes-1.png'
-    dataset = PCVoxPoisson(filename, domain_size=domain_size)
-    network = torch.load(os.path.join(case_dir, 'network.pt'))
-    equation = Poisson(network, dataset, batch_size=1, domain_size=domain_size)
-    # Query
-    inputs, forcing = equation.dataset[0:1]
-    up = equation.do_query(inputs, forcing)
-    pc = inputs[0:1,:,:].squeeze()
-    normals = inputs[1:2,:,:].squeeze()
-    u_pts, u_x_pts, u_y_pts = equation.loss_calc_inspect(up, inputs.unsqueeze(0), forcing.unsqueeze(0))
-    grad_vec = torch.stack((u_x_pts.detach().squeeze(), u_y_pts.detach().squeeze()), dim=0)
-    grad_vec = grad_vec.T
-    grad_mag = torch.sqrt(torch.sum(grad_vec**2, dim=1, keepdim=True))
-    grad_vec_unit = grad_vec/grad_mag
-    averaged_normals = np.load(os.path.join(poisson_path, 'renormal.npy'))
-    # return pc.numpy(), grad_vec_unit.numpy(), averaged_normals
-    return pc.numpy(), averaged_normals
+# def load_pc_normals_from_poisson():
+#     version_id = 4
+#     domain_size = 256
+#     poisson_path = '/work/baskarg/bkhara/diffnet/examples/poisson/single_instance/'
+#     cib_path = poisson_path + 'pc_complex_immersed_background/'
+#     case_dir = cib_path + 'version_'+str(version_id)
+#     # filename = 'bunny-18.png'
+#     filename = poisson_path + 'bonefishes-1.png'
+#     dataset = PCVoxPoisson(filename, domain_size=domain_size)
+#     network = torch.load(os.path.join(case_dir, 'network.pt'))
+#     equation = Poisson(network, dataset, batch_size=1, domain_size=domain_size)
+#     # Query
+#     inputs, forcing = equation.dataset[0:1]
+#     up = equation.do_query(inputs, forcing)
+#     pc = inputs[0:1,:,:].squeeze()
+#     normals = inputs[1:2,:,:].squeeze()
+#     u_pts, u_x_pts, u_y_pts = equation.loss_calc_inspect(up, inputs.unsqueeze(0), forcing.unsqueeze(0))
+#     grad_vec = torch.stack((u_x_pts.detach().squeeze(), u_y_pts.detach().squeeze()), dim=0)
+#     grad_vec = grad_vec.T
+#     grad_mag = torch.sqrt(torch.sum(grad_vec**2, dim=1, keepdim=True))
+#     grad_vec_unit = grad_vec/grad_mag
+#     averaged_normals = np.load(os.path.join(poisson_path, 'renormal.npy'))
+#     # return pc.numpy(), grad_vec_unit.numpy(), averaged_normals
+#     return pc.numpy(), averaged_normals
 
 def load_pc_normals_from_file():
     pc = np.load('./point_cloud.npz')
@@ -144,6 +144,29 @@ class PCVox(data.Dataset):
         else:
             raise ValueError('invalid extension; extension not supported')
         # Define kernel for x differences
+<<<<<<< HEAD
+        # kx = np.array([[1,0,-1],[2,0,-2],[1,0,-1]])
+        # # Define kernel for y differences
+        # ky = np.array([[1,2,1] ,[0,0,0], [-1,-2,-1]])
+        # # Perform x convolution
+        # nx = ndimage.convolve(img,kx)
+        # # Perform y convolution
+        # ny = ndimage.convolve(img,ky)
+        # nx = np.divide(nx,(nx**2 + ny**2), out=np.zeros_like(nx), where=((nx**2 + ny**2)!=0))
+        # ny = np.divide(ny,(nx**2 + ny**2), out=np.zeros_like(ny), where=((nx**2 + ny**2)!=0))
+        # # bc1 will be source, sdf will be set to 0.5 at these locations
+        # self.pc, _ = im2pc(img,nx,ny)
+        # _, self.normals = load_pc_normals_from_poisson()
+        # self.pc = self.pc/(img.shape[0])
+        pt_cloud = []
+        for _ in range(1000):
+            vec = np.random.randn(2)
+            vec /= 4*np.linalg.norm(vec)
+            pt_cloud.append(vec)
+        pt_cloud = np.array(pt_cloud)
+        self.normals = pt_cloud*4.0
+        self.pc = pt_cloud + 0.5
+=======
         kx = np.array([[1,0,-1],[2,0,-2],[1,0,-1]])
         # Define kernel for y differences
         ky = np.array([[1,2,1] ,[0,0,0], [-1,-2,-1]])
@@ -166,6 +189,7 @@ class PCVox(data.Dataset):
         # pt_cloud = np.array(pt_cloud)
         # self.normals = pt_cloud*4.0
         # self.pc = pt_cloud + 0.5
+>>>>>>> d4fee48243641b7ac4cab5e413aba5b6acd539bf
         self.domain = np.ones((domain_size,domain_size))
         self.domain_size = domain_size
         self.n_samples = 100
@@ -450,6 +474,13 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
         JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
 
         # First loss - eikonal eqn ie   grad(u) = 1
+        # print('^ '*10)
+        # print('u_gp ', u_gp.shape)
+        # print('dN_x_values ',dN_x_values.shape)
+        # print('u_x_gp ', u_x_gp.shape)
+        # print('N_values ', N_values.shape)
+        
+        # exit()
         eikonal_lhs = tau*u_gp*(dN_x_values*u_x_gp + dN_y_values*u_y_gp) + (1+tau)*N_values*(u_x_gp**2+u_y_gp**2)
         eikonal_rhs = N_values * 1.0 
 
@@ -463,6 +494,12 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
         # apply boundary conditions
         nidx = (pc[:,:,:,0]/self.hx).type(torch.LongTensor).to(pc.device)
         nidy = (pc[:,:,:,1]/self.hy).type(torch.LongTensor).to(pc.device)
+
+
+        # print('* '*10)
+        # print(u.shape)
+        # print(nidx.shape)
+        # exit()
         u_pts_grid =  torch.stack([
                 torch.stack([
                     torch.stack([u[b,0,nidx[b,0,:],nidy[b,0,:]] for b in range(u.size(0))]),
@@ -471,6 +508,9 @@ class Eiqonal(DiffNet2DFEM,DiffNetFDM):
                     torch.stack([u[b,0,nidx[b,0,:],nidy[b,0,:]+1] for b in range(u.size(0))]),
                     torch.stack([u[b,0,nidx[b,0,:]+1,nidy[b,0,:]+1] for b in range(u.size(0))])])
                 ]).unsqueeze(2)
+
+        print('* '*10)
+
         x_pts = pc[:,:,:,0] - nidx.type_as(pc)*self.hx 
         y_pts = pc[:,:,:,1] - nidy.type_as(pc)*self.hy
         xi_pts = (x_pts*2)/self.hx - 1
