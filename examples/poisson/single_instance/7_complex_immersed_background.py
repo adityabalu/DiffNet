@@ -108,11 +108,11 @@ class Poisson(DiffNet2DFEM):
             ax.set_xticks([])
             ax.set_yticks([])
 
-        im0 = axs[0].imshow(nu,cmap='jet')
-        fig.colorbar(im0, ax=axs[0])
+        im0 = axs[0].imshow(1-nu,cmap='gray')
+        fig.colorbar(im0, ax=axs[0], ticks=[0, 1])
         im1 = axs[1].imshow(u,cmap='jet')
         fig.colorbar(im1, ax=axs[1])  
-        plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
+        plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.pdf'))
         self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
         plt.close('all')
 
