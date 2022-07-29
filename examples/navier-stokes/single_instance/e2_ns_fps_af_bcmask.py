@@ -62,9 +62,9 @@ class NS_FPS_Dataset(data.Dataset):
         self.y = yy
 
         # load the bc mask
-        bcarr = np.load('./af_images/fpa_bc_128x64.npy')
-        self.bc1 = bcarr
-        self.bc2 = bcarr
+        self.bcarr = np.load('./af_images/fpa_bc_128x64.npy')
+        self.bc1 = self.bcarr
+        self.bc2 = self.bcarr
 
         # object
         # self.obj_ctr = [3., 3.]
@@ -572,11 +572,11 @@ def main():
     Re = 1.
     dir_string = "ns_fps_af"
     max_epochs = 50001
-    save_frequency = 10
-    LR = 3e-4
+    save_frequency = 100
+    LR = 5e-3
     opt_switch_epochs = max_epochs
-    load_from_prev = False
-    load_version_id = 69
+    load_from_prev = True
+    load_version_id = 2
     eq_type = 'stokes'
 
     enable_progress_bar = True
@@ -593,7 +593,7 @@ def main():
 
     if load_from_prev:
         print("LOADING FROM PREVIOUS VERSION: ", load_version_id)
-        case_dir = './ns_fps/version_'+str(load_version_id)
+        case_dir = './ns_fps_af/version_'+str(load_version_id)
         net_u = torch.load(os.path.join(case_dir, 'net_u.pt'))
         net_v = torch.load(os.path.join(case_dir, 'net_v.pt'))
         net_p = torch.load(os.path.join(case_dir, 'net_p.pt'))
