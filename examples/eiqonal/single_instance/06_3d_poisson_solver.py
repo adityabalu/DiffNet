@@ -18,11 +18,9 @@ from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.loggers import TensorBoardLogger
 seed_everything(42)
 
-from torch.utils import data
 import DiffNet
 from DiffNet.networks.wgan import GoodNetwork
 from DiffNet.DiffNetFEM import DiffNet3DFEM
-
 
 def load_raw(fileName, **kwargs):
     def _configParser(cName):
@@ -56,8 +54,8 @@ class VoxelIMBackRAW(data.Dataset):
         """
 
         vox, _, _ , _  = load_raw(filename)
-        domain = np.zeros((domain_size, domain_size, domain_size))
-        domain[32:32+vox.shape[0],32:32+vox.shape[1],32:32+vox.shape[2]] = vox
+        domain = np.ones((domain_size, domain_size, domain_size))
+        domain[32:32+vox.shape[0],32:32+vox.shape[1],32:32+vox.shape[2]] = 1 - vox
         self.domain = domain
 
         # bc1 will be source, u will be set to 1 at these locations
@@ -71,7 +69,7 @@ class VoxelIMBackRAW(data.Dataset):
         self.bc2[:,-1,:] = 1
         self.bc2[:,:,0] = 1
         self.bc2[:,:,-1] = 1
-        self.n_samples = 10
+        self.n_samples = 100
 
     def __len__(self):
         'Denotes the total number of samples'
@@ -79,11 +77,9 @@ class VoxelIMBackRAW(data.Dataset):
 
     def __getitem__(self, index):
         'Generates one sample of data'
-        inputs = np.array([1-self.domain, self.bc1, self.bc2])
+        inputs = np.array([self.domain, self.bc1, self.bc2])
         forcing = np.zeros_like(self.domain)
         return torch.FloatTensor(inputs), torch.FloatTensor(forcing).unsqueeze(0)
-
-
 
 class Poisson(DiffNet3DFEM):
     """docstring for Poisson"""
@@ -116,7 +112,7 @@ class Poisson(DiffNet3DFEM):
         u_z_gp = self.gauss_pt_evaluation_der_z(u)
 
         transformation_jacobian = self.gpw.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(0).type_as(nu_gp)
-        res_elmwise = transformation_jacobian * (0.5 * nu_gp * (u_x_gp**2 + u_y_gp**2  + u_z_gp**2))
+        res_elmwise = transformation_jacobian * ((0.5 * nu_gp * (u_x_gp**2 + u_y_gp**2  + u_y_gp**2) - (u_gp * f_gp)))
         res_elmwise = torch.sum(res_elmwise, 1) 
 
         loss = torch.mean(res_elmwise)
@@ -163,7 +159,7 @@ class Poisson(DiffNet3DFEM):
 
     def configure_optimizers(self):
         lr = self.learning_rate
-        # opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=1)]
+        # opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
         opts = [torch.optim.Adam(self.network, lr=lr)]
         # opts = [torch.optim.Adam(self.network, lr=lr), torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
         return opts, []
@@ -210,9 +206,9 @@ class Poisson(DiffNet3DFEM):
 def main():
     filename = 'Engine'
     dataset = VoxelIMBackRAW(filename, domain_size=196)
-    u_tensor = np.zeros_like(dataset.domain)
+    u_tensor = np.ones_like(dataset.domain)
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
-    basecase = Poisson(network, dataset, batch_size=1, domain_size=196, learning_rate=0.1, nsd=3)
+    basecase = Poisson(network, dataset, batch_size=1, domain_size=196, learning_rate=0.01, nsd=3)
 
     # ------------------------
     # 1 INIT TRAINER
