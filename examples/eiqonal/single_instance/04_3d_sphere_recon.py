@@ -28,7 +28,7 @@ import PIL
 from torch.utils import data
 
 import torch
-from NURBSDiff.curve_eval import CurveEval
+# from NURBSDiff.curve_eval import CurveEval
 
 
 

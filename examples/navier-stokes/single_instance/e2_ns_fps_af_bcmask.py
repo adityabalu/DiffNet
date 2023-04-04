@@ -49,7 +49,7 @@ class OptimSwitchLBFGS(Callback):
 
 class NS_FPS_Dataset(data.Dataset):
     'PyTorch dataset for Stokes_MMS_Dataset'
-    def __init__(self, domain_lengths=(1.,1.), domain_sizes=(32,32), Re=1):
+    def __init__(self, domain_lengths=(1.,1.), domain_sizes=(32,32), Re=1, bcfile='./af_images/fpa_bc_128x64.npy'):
         """
         Initialization
         """
@@ -62,9 +62,9 @@ class NS_FPS_Dataset(data.Dataset):
         self.y = yy
 
         # load the bc mask
-        bcarr = np.load('./af_images/fpa_bc_128x64.npy')
-        self.bc1 = bcarr
-        self.bc2 = bcarr
+        self.bcarr = np.load(bcfile)
+        self.bc1 = self.bcarr
+        self.bc2 = self.bcarr
 
         # object
         # self.obj_ctr = [3., 3.]
@@ -564,42 +564,47 @@ class NS_FPS(DiffNet2DFEM):
         plt.close('all')
 
 def main():
-    lx = 10.
-    ly = 5.
+    lx = 8.
+    ly = 1.
     Nx = 128
-    Ny = 64
+    Ny = 96
     domain_size = 32
     Re = 1.
     dir_string = "ns_fps_af"
     max_epochs = 50001
-    save_frequency = 10
-    LR = 3e-4
+    save_frequency = 100
+    LR = 5e-3
     opt_switch_epochs = max_epochs
     load_from_prev = False
-    load_version_id = 69
+    load_version_id = 2
     eq_type = 'stokes'
 
     enable_progress_bar = True
+    bcfile = './af_images/fpa_bc_128x64.npy'
     print("argv = ", sys.argv)
     if len(sys.argv) > 1:
         enable_progress_bar = bool(int(sys.argv[1]))
         print("enable_progress_bar = ", enable_progress_bar)
+        if len(sys.argv) > 2:
+            bcfile = sys.argv[2]
+            print("bcfile =", bcfile)
 
     x = np.linspace(0, lx, Nx)
     y = np.linspace(0, ly, Ny)
     xx , yy = np.meshgrid(x, y)
 
-    dataset = NS_FPS_Dataset(domain_lengths=(lx,ly), domain_sizes=(Nx,Ny), Re=Re)
+    dataset = NS_FPS_Dataset(domain_lengths=(lx,ly), domain_sizes=(Nx,Ny), Re=Re, bcfile=bcfile)
 
     if load_from_prev:
         print("LOADING FROM PREVIOUS VERSION: ", load_version_id)
-        case_dir = './ns_fps/version_'+str(load_version_id)
+        case_dir = './ns_fps_af/version_'+str(load_version_id)
         net_u = torch.load(os.path.join(case_dir, 'net_u.pt'))
         net_v = torch.load(os.path.join(case_dir, 'net_v.pt'))
         net_p = torch.load(os.path.join(case_dir, 'net_p.pt'))
     else:
         print("INITIALIZING PARAMETERS TO ZERO")
         v1 = np.zeros_like(dataset.x)
+        # v1 = 1-(2*dataset.y/ly-1)**2
         v2 = np.zeros_like(dataset.x)
         p  = np.zeros_like(dataset.x)
         u_tensor = np.expand_dims(np.array([v1,v2,p]),0)
@@ -619,7 +624,7 @@ def main():
     csv_logger = pl.loggers.CSVLogger(logger.save_dir, name=logger.name, version=logger.version)
 
     early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss_u',
-        min_delta=1e-8, patience=10, verbose=False, mode='max', strict=True)
+        min_delta=1e-8, patience=max_epochs, verbose=False, mode='max', strict=True)
     checkpoint = pl.callbacks.model_checkpoint.ModelCheckpoint(monitor='loss',
         dirpath=logger.log_dir, filename='{epoch}-{step}',
         mode='min', save_last=True)
@@ -628,7 +633,7 @@ def main():
 
     trainer = Trainer(gpus=[0],callbacks=[early_stopping,lbfgs_switch],
         checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=max_epochs, deterministic=True, profiler="simple")
+        max_epochs=max_epochs, deterministic=True, profiler="simple", enable_progress_bar=enable_progress_bar)
 
     print("logdir = ", logger.log_dir)
 
