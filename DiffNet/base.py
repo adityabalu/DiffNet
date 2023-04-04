@@ -8,11 +8,10 @@ class PDE(LightningModule):
     PDE Base Class
     """
 
-    def __init__(self, network, dataset, **kwargs):
+    def __init__(self, network, **kwargs):
         super().__init__()
         # self.save_hyperparameters(kwargs)
         self.kwargs = kwargs
-        self.dataset = dataset
         self.network = network
         self.nsd = kwargs.get('nsd', 2)
         self.batch_size =  kwargs.get('batch_size', 64)
@@ -46,12 +45,6 @@ class PDE(LightningModule):
         self.log('PDE_loss', loss_val.item())
         self.log('loss', loss_val.item())
         return loss_val
-
-    def train_dataloader(self):
-        """
-        The data returned by DataLoader is on the same device that PL is using for network parameter
-        """
-        return DataLoader(self.dataset, batch_size=self.batch_size)
 
     def configure_optimizers(self):
         """

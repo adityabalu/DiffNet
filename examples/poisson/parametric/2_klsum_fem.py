@@ -27,8 +27,8 @@ from DiffNet.datasets.single_instances.klsum import Dataset
 
 class Poisson(DiffNet2DFEM):
     """docstring for Poisson"""
-    def __init__(self, network, dataset, **kwargs):
-        super(Poisson, self).__init__(network, dataset, **kwargs)
+    def __init__(self, network, **kwargs):
+        super(Poisson, self).__init__(network, **kwargs)
 
     def loss(self, u, inputs_tensor, forcing_tensor):
 
@@ -141,9 +141,10 @@ def main():
     print("Max_epochs = ", max_epochs)
 
     dataset = KLSumStochastic(sobol_file, domain_size=domain_size, kl_terms=kl_terms)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
     # dataset = Dataset('../single_instance/example-coefficients.txt', domain_size=64)
     network = AE(in_channels=1, out_channels=1, dims=64, n_downsample=3)
-    basecase = Poisson(network, dataset, batch_size=batch_size, domain_size=domain_size, learning_rate=LR)
+    basecase = Poisson(network, batch_size=batch_size, domain_size=domain_size, learning_rate=LR)
 
     # ------------------------
     # 1 INIT TRAINER
@@ -161,16 +162,25 @@ def main():
         checkpoint_callback=True, logger=[logger,csv_logger],
         max_epochs=max_epochs, deterministic=True, profiler='simple', auto_lr_find=True)
 
+    ## Inits for updated lightning and wandb logger - EH
+    # wandb_logger = WandbLogger(project='IBN', 
+    #                            log_model='all')
+    
+    # checkpoint = ModelCheckpoint(monitor='train_loss',
+    #                              mode='min', 
+    #                              save_last=True)
+
+    # trainer = pl.Trainer(gpus=[0],
+    #                      callbacks=[checkpoint],
+    #                      logger=wandb_logger, 
+    #                      max_epochs=max_epochs,
+    #                      fast_dev_run=args.debug)
+
     # ------------------------
     # 4 Training
     # ------------------------
 
-    trainer.fit(basecase)
-
-    # ------------------------
-    # 5 SAVE NETWORK
-    # ------------------------
-    torch.save(basecase.network, os.path.join(logger.log_dir, 'network.pt'))
+    trainer.fit(basecase, dataloader)
 
 
 if __name__ == '__main__':

@@ -20,8 +20,8 @@ def gauss_pt_eval(tensor, N, nsd=2, stride=1):
 
 class DiffNetFEM(PDE):
     """docstring for DiffNetFEM"""
-    def __init__(self, network, dataset, **kwargs):
-        super(DiffNetFEM, self).__init__(network, dataset, **kwargs)
+    def __init__(self, network, **kwargs):
+        super(DiffNetFEM, self).__init__(network, **kwargs)
         self.ngp_1d = kwargs.get('ngp_1d', 2)
         self.fem_basis_deg = kwargs.get('fem_basis_deg', 1)
 
@@ -177,8 +177,8 @@ class DiffNetFEM(PDE):
 
 class DiffNet2DFEM(DiffNetFEM):
     """docstring for DiffNet2DFEM"""
-    def __init__(self, network, dataset, **kwargs):
-        super(DiffNet2DFEM, self).__init__(network, dataset, **kwargs)
+    def __init__(self, network, **kwargs):
+        super(DiffNet2DFEM, self).__init__(network, **kwargs)
         assert self.nsd==2
         self.gpw = torch.zeros(self.ngp_total)
         self.N_gp = nn.ParameterList() 
@@ -381,8 +381,8 @@ class DiffNet2DFEM(DiffNetFEM):
 
 class DiffNet3DFEM(DiffNetFEM):
     """docstring for DiffNet2DFEM"""
-    def __init__(self, network, dataset, **kwargs):
-        super(DiffNet3DFEM, self).__init__(network, dataset, **kwargs)
+    def __init__(self, network, **kwargs):
+        super(DiffNet3DFEM, self).__init__(network, **kwargs)
         assert self.nsd==3
         self.gpw = torch.zeros(self.ngp_total)
         self.N_gp = nn.ParameterList() 

@@ -122,8 +122,8 @@ def get_sobel_correction_matrix(nsd, size, padding_xy, padding_xy_d2):
 
 class DiffNetFDM(PDE):
     """docstring for DiffNetFDM"""
-    def __init__(self, network, dataset, **kwargs):
-        super(DiffNetFDM, self).__init__(network, dataset, **kwargs)
+    def __init__(self, network, **kwargs):
+        super(DiffNetFDM, self).__init__(network, **kwargs)
 
         self.nsd = 2
         self.ktype = 'fdm'
