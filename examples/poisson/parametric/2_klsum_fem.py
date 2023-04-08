@@ -23,6 +23,7 @@ from DiffNet.networks.autoencoders import AE
 from DiffNet.DiffNetFEM import DiffNet2DFEM
 from DiffNet.datasets.parametric.klsum import KLSumStochastic
 from DiffNet.datasets.single_instances.klsum import Dataset
+from torch.utils.data import DataLoader
 
 
 class Poisson(DiffNet2DFEM):
@@ -69,13 +70,15 @@ class Poisson(DiffNet2DFEM):
     def training_step(self, batch, batch_idx):
         u, inputs_tensor, forcing_tensor = self.forward(batch)
         loss_val = self.loss(u, inputs_tensor, forcing_tensor).mean()
-        return {"loss": loss_val}
+        self.log("loss", loss_val)
+        # return {"loss": loss_val}
+        return loss_val
 
-    def training_step_end(self, training_step_outputs):
-        loss = training_step_outputs["loss"]
-        self.log('PDE_loss', loss.item())
-        self.log('loss', loss.item())
-        return training_step_outputs
+    # def training_step_end(self, training_step_outputs):
+    #     loss = training_step_outputs #["loss"]
+    #     self.log('PDE_loss', loss.item())
+    #     self.log('loss', loss.item())
+    #     return training_step_outputs
 
     def configure_optimizers(self):
         lr = self.learning_rate
@@ -158,9 +161,9 @@ def main():
         dirpath=logger.log_dir, filename='{epoch}-{step}',
         mode='min', save_last=True)
 
-    trainer = Trainer(gpus=[0],callbacks=[early_stopping,checkpoint],
-        checkpoint_callback=True, logger=[logger,csv_logger],
-        max_epochs=max_epochs, deterministic=True, profiler='simple', auto_lr_find=True)
+    # trainer = Trainer(accelerator='gpu',devices=1,callbacks=[early_stopping,checkpoint],
+    #     logger=[logger,csv_logger],
+    #     max_epochs=max_epochs, deterministic=True, profiler='simple')
 
     ## Inits for updated lightning and wandb logger - EH
     # wandb_logger = WandbLogger(project='IBN', 
@@ -170,11 +173,12 @@ def main():
     #                              mode='min', 
     #                              save_last=True)
 
-    # trainer = pl.Trainer(gpus=[0],
-    #                      callbacks=[checkpoint],
-    #                      logger=wandb_logger, 
-    #                      max_epochs=max_epochs,
-    #                      fast_dev_run=args.debug)
+    trainer = pl.Trainer(accelerator='gpu',devices=1,
+                         callbacks=[early_stopping,checkpoint],
+                         logger=[logger,csv_logger], 
+                         max_epochs=max_epochs,
+                         fast_dev_run=False
+                         )
 
     # ------------------------
     # 4 Training
