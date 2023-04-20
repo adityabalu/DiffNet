@@ -22,12 +22,14 @@ import DiffNet
 from DiffNet.networks.wgan import GoodNetwork
 from DiffNet.DiffNetFEM import DiffNet3DFEM
 from DiffNet.datasets.single_instances.cuboids import CuboidManufactured
+from torch.utils.data import DataLoader
+# from pytorch_lightning.pytorch.callbacks import Callback
 
 
 class Poisson(DiffNet3DFEM):
     """docstring for Poisson"""
     def __init__(self, network, dataset, **kwargs):
-        super(Poisson, self).__init__(network, dataset, **kwargs)
+        super(Poisson, self).__init__(network, **kwargs)
         # x = np.linspace(0,1,self.domain_size)
         # y = np.linspace(0,1,self.domain_size)
         # z = np.linspace(0,1,self.domain_size)        
@@ -37,9 +39,15 @@ class Poisson(DiffNet3DFEM):
         # y_1d = np.linspace(0,1,5)
         # z_1d = np.linspace(0,1,4)        
         # xx, yy, zz = self.meshgrid_3d(x_1d, y_1d, z_1d)
-        self.u_exact = self.exact_solution(self.dataset.xx,self.dataset.yy,self.dataset.zz)
+        # self.u_exact = self.exact_solution(self.dataset.xx,self.dataset.yy,self.dataset.zz)
+        self.u_exact = self.exact_solution(dataset.xx,dataset.yy,dataset.zz)
         self.f_gp = self.forcing(self.xgp,self.ygp,self.zgp)
         self.diffusivity = 1.
+        self.loss_type = kwargs.get('loss_type', "energy")
+        if self.loss_type == "energy":
+            self.loss_func = self.loss_EnergyMin
+        elif self.loss_type == "resmin":
+            self.loss_func = self.loss_ResMin
 
     def exact_solution(self, x,y,z):
         pi = math.pi
@@ -65,7 +73,7 @@ class Poisson(DiffNet3DFEM):
         Aglobal[:,0, 1:  , 1:  , 1:  ] += Aloc_all[:,7, :, :, :]
         return Aglobal
 
-    def loss(self, u, inputs_tensor, forcing_tensor):
+    def loss_ResMin(self, u, inputs_tensor, forcing_tensor):
         N_values = self.Nvalues.type_as(u)
         dN_x_values = self.dN_x_values.type_as(u)
         dN_y_values = self.dN_y_values.type_as(u)
@@ -177,15 +185,16 @@ class Poisson(DiffNet3DFEM):
     # def training_step(self, batch, batch_idx):
         u, inputs_tensor, forcing_tensor = self.forward(batch)
         # loss_val = self.loss_EnergyMin(u, inputs_tensor, forcing_tensor).mean()
-        loss_val = self.loss(u, inputs_tensor, forcing_tensor).mean()
+        loss_val = self.loss_func(u, inputs_tensor, forcing_tensor).mean()
         # self.log('PDE_loss', loss_val.item())
         # self.log('loss', loss_val.item())
+        self.log("loss", loss_val)
         return {"loss": loss_val}
 
-    def training_step_end(self, training_step_outputs):
-        loss = training_step_outputs["loss"]
-        self.log('loss', loss.item())
-        return training_step_outputs
+    # def training_step_end(self, training_step_outputs):
+    #     loss = training_step_outputs["loss"]
+    #     self.log('loss', loss.item())
+    #     return training_step_outputs
 
     def configure_optimizers(self):
         lr = self.learning_rate
@@ -194,20 +203,31 @@ class Poisson(DiffNet3DFEM):
         # opts = [torch.optim.Adam(self.network, lr=lr), torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
         return opts, []
 
-    def on_epoch_end(self):
-        self.network.eval()
-        inputs, forcing = self.dataset[0]
-        nu, f, u = self.do_query(inputs, forcing)
-        nu = nu.squeeze().detach().cpu()
-        u = u.squeeze().detach().cpu()
-        self.plot_contours(nu, f, u)
+class MyPrintingCallback(pl.callbacks.Callback):
+    # def on_train_start(self, trainer, pl_module):
+    #     print("Training is starting")
+    # def on_train_end(self, trainer, pl_module):
+    #     print("Training is ending")
+    # def on_validation_epoch_end(self, trainer, pl_module):
+    #     print("On validation epoch end")
 
-    def do_query(self, inputs, forcing):
-        inputs, forcing = self.dataset[0]
+    def on_train_epoch_end(self, trainer, pl_module):
+        # print("On training epoch end")
+        # print("pl_module name = ", pl_module.__class__.__name__)
+        # print(trainer.train_dataloader.dataset)
+        pl_module.network.eval()
+        nu, f, u = self.do_query(trainer, pl_module)
+        nu = nu.detach().cpu().squeeze()
+        u = u.detach().cpu().squeeze()
+        f = f.detach().cpu().squeeze()
+        self.plot_contours(trainer, pl_module, nu, f, u)
 
-        u, inputs_tensor, forcing_tensor = self.forward((inputs.unsqueeze(0).type_as(next(self.network.parameters())), forcing.unsqueeze(0).type_as(next(self.network.parameters()))))
+    def do_query(self, trainer, pl_module):
+        inputs, forcing = trainer.train_dataloader.dataset[0]
 
-        f = forcing_tensor.squeeze().detach().cpu() # renaming variable
+        u, inputs_tensor, forcing_tensor = pl_module.forward((inputs.unsqueeze(0).type_as(next(pl_module.network.parameters())), forcing.unsqueeze(0).type_as(next(pl_module.network.parameters()))))
+
+        f = forcing_tensor
         
         # extract diffusivity and boundary conditions here
         nu = inputs_tensor[:,0:1,:,:]
@@ -220,7 +240,7 @@ class Poisson(DiffNet3DFEM):
 
         return nu, f, u
 
-    def plot_contours(self,nu,f,u):
+    def plot_contours(self,trainer,pl_module,nu,f,u):
         fig, axs = plt.subplots(3, 4, figsize=(2*4,1.2*3),
                             subplot_kw={'aspect': 'auto'}, sharex=True, sharey=True, squeeze=True)
         for ax_row in axs:
@@ -228,35 +248,35 @@ class Poisson(DiffNet3DFEM):
                 ax.set_xticks([])
                 ax.set_yticks([])
         
-        u_exact = self.u_exact
+        u_exact = pl_module.u_exact
         diff = u - u_exact
 
-        sliceidx = int(self.domain_size / 2)
+        sliceidx = int(pl_module.domain_size / 2)
         # print(np.linalg.norm(diff.flatten())/self.domain_size)
         # z-slices
         row_id = 0
-        sliceZ = int(self.domain_size / 2)
+        sliceZ = int(pl_module.domain_size / 2)
         im = axs[row_id,0].imshow(f[sliceZ,:,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,0]) #ticks=[0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]
         im = axs[row_id,1].imshow(u[sliceZ,:,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,1])
         im = axs[row_id,2].imshow(u_exact[sliceZ,:,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,2])
         im = axs[row_id,3].imshow(diff[sliceZ,:,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,3])
         # y-slices
         row_id = 1
-        sliceY = int(self.domain_size / 2)
+        sliceY = int(pl_module.domain_size / 2)
         im = axs[row_id,0].imshow(f[:,sliceY,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,0]) #ticks=[0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]
         im = axs[row_id,1].imshow(u[:,sliceY,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,1])
         im = axs[row_id,2].imshow(u_exact[:,sliceY,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,2])
         im = axs[row_id,3].imshow(diff[:,sliceY,:],cmap='jet'); fig.colorbar(im, ax=axs[row_id,3])
         # x-slices
         row_id = 2
-        sliceX = int(self.domain_size / 2)
+        sliceX = int(pl_module.domain_size / 2)
         im = axs[row_id,0].imshow(f[:,:,sliceX],cmap='jet'); fig.colorbar(im, ax=axs[row_id,0]) #ticks=[0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]
         im = axs[row_id,1].imshow(u[:,:,sliceX],cmap='jet'); fig.colorbar(im, ax=axs[row_id,1])
         im = axs[row_id,2].imshow(u_exact[:,:,sliceX],cmap='jet'); fig.colorbar(im, ax=axs[row_id,2])
         im = axs[row_id,3].imshow(diff[:,:,sliceX],cmap='jet'); fig.colorbar(im, ax=axs[row_id,3])
 
-        plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
-        self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
+        plt.savefig(os.path.join(trainer.logger.log_dir, 'contour_' + str(trainer.current_epoch) + '.png'))
+        trainer.logger.experiment.add_figure('Contour Plots', fig, trainer.current_epoch)
         plt.close('all')
 
         # fig, axs = plt.subplots(len(self.vis_sample_ids), 6, figsize=(2*4,1.2*len(self.vis_sample_ids)),
@@ -298,12 +318,15 @@ class Poisson(DiffNet3DFEM):
 
 def main():
     domain_size = 24
+    max_epochs = 15
+    loss_type = "energy"
+    # loss_type = "resmin"
     dir_string = "poisson-mms-resmin-3d"
-    max_epochs = 10
     u_tensor = np.ones((1,1,domain_size,domain_size,domain_size))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
     dataset = CuboidManufactured(domain_size=domain_size)
-    basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=0.01, nsd=3, fem_basis_deg=1)
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=4, pin_memory=True)
+    basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=0.01, nsd=3, fem_basis_deg=1, loss_type=loss_type)
 
     # ------------------------
     # 1 INIT TRAINER
@@ -316,16 +339,20 @@ def main():
     checkpoint = pl.callbacks.model_checkpoint.ModelCheckpoint(monitor='loss',
         dirpath=logger.log_dir, filename='{epoch}-{step}',
         mode='min', save_last=True)
+    printsave = MyPrintingCallback()
 
-    trainer = Trainer(gpus=[0],callbacks=[early_stopping],
-        checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=max_epochs, deterministic=True, profiler="simple")
+    trainer = pl.Trainer(accelerator='gpu',devices=1,
+                         callbacks=[early_stopping,checkpoint,printsave],
+                         logger=[logger,csv_logger],
+                         max_epochs=max_epochs,
+                         fast_dev_run=False
+                         )
 
     # ------------------------
     # 4 Training
     # ------------------------
 
-    trainer.fit(basecase)
+    trainer.fit(basecase, dataloader)
 
     # ------------------------
     # 5 SAVE NETWORK
@@ -333,9 +360,6 @@ def main():
     torch.save(basecase.network, os.path.join(logger.log_dir, 'network.pt'))
 
     # L2 error calculation
-    basecase.dataset[0]
-    inputs, forcing = basecase.dataset[0]
-    nu, f, u = basecase.do_query(inputs, forcing) 
     print("Calculating L2 error:")
     basecase.calc_l2_err(u.detach())
 
