@@ -43,11 +43,17 @@ class Poisson(DiffNet3DFEM):
         self.u_exact = self.exact_solution(dataset.xx,dataset.yy,dataset.zz)
         self.f_gp = self.forcing(self.xgp,self.ygp,self.zgp)
         self.diffusivity = 1.
+
+        # u_bc = np.zeros_like(dataset.xx)
+        self.u_bc = torch.FloatTensor(self.u_exact)
+
+        self.optimizer = kwargs.get('optimizer', "lbfgs")
         self.loss_type = kwargs.get('loss_type', "energy")
         if self.loss_type == "energy":
             self.loss_func = self.loss_EnergyMin
         elif self.loss_type == "resmin":
             self.loss_func = self.loss_ResMin
+
 
     def exact_solution(self, x,y,z):
         pi = math.pi
@@ -80,6 +86,7 @@ class Poisson(DiffNet3DFEM):
         dN_z_values = self.dN_z_values.type_as(u)
         gpw = self.gpw.type_as(u)
         f_gp = self.f_gp.type_as(u)
+        u_bc = self.u_bc.unsqueeze(0).unsqueeze(0).type_as(u)
 
         # extract diffusivity and boundary conditions here
         f = forcing_tensor # renaming variable
@@ -92,12 +99,11 @@ class Poisson(DiffNet3DFEM):
         JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
 
         # apply boundary conditions
-        # NOTE: we do add the BC to the residual later, but adding the residual to u is also very important
-        #       because ideally we want to calculate the values of A*u when A is BC adjusted. But since we
-        #       are not altering the convolution kernel "Kmatrices" (i.e., effectively the values of A), thus
-        #       we will end up with bad values in R at the interior points
-        u = torch.where(bc1>0.5,1.0+u*0.0,u)
-        u = torch.where(bc2>0.5,u*0.0,u)
+        # NOTE: Adding the residual to u is very important
+        #       After this step, "u" is complete with BCs
+        #       We later need to do another BC operation after the residual R is calculated
+        # u = torch.where(bc1>0.5,1.0+u*0.0,u)
+        u = torch.where(bc2>0.5,u_bc,u)
 
         u_x_gp = self.gauss_pt_evaluation_der_x(u)
         u_y_gp = self.gauss_pt_evaluation_der_y(u)
@@ -119,8 +125,9 @@ class Poisson(DiffNet3DFEM):
         R_split = v_lhs - v_rhs
         # assembly
         R = torch.zeros_like(u); R = self.Q1_3D_vector_assembly(R, R_split)
-        # add boundary conditions to R <---- this step is very important
-        R = torch.where(bc1>0.5,1.+R*0.0,R)
+
+        # Boundary operation on residual <---- below step is very important
+        # Set the residuals on the Dirichlet boundaries to zero 
         R = torch.where(bc2>0.5,R*0.0,R)
 
         loss = torch.sum(R**2)
@@ -198,8 +205,12 @@ class Poisson(DiffNet3DFEM):
 
     def configure_optimizers(self):
         lr = self.learning_rate
-        opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=10)]
-        # opts = [torch.optim.Adam(self.network, lr=lr)]
+        if self.optimizer == "adam":
+            print("Choosing Adam")
+            opts = [torch.optim.Adam(self.network, lr=lr)]
+        elif self.optimizer == "lbfgs":
+            print("Choosing LBFGS")
+            opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=10)]
         # opts = [torch.optim.Adam(self.network, lr=lr), torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
         return opts, []
 
@@ -317,16 +328,19 @@ class MyPrintingCallback(pl.callbacks.Callback):
         #         fig.colorbar(im, ax=axs[idx, 5])
 
 def main():
-    domain_size = 24
-    max_epochs = 15
+    domain_size = 32
+    max_epochs = 50
     loss_type = "energy"
     # loss_type = "resmin"
+    optimizer = "lbfgs"
+    # optimizer = "adam"
+    print(f"Config = ({loss_type}, {optimizer})")
     dir_string = "poisson-mms-resmin-3d"
     u_tensor = np.ones((1,1,domain_size,domain_size,domain_size))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
     dataset = CuboidManufactured(domain_size=domain_size)
     dataloader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=4, pin_memory=True)
-    basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=0.01, nsd=3, fem_basis_deg=1, loss_type=loss_type)
+    basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=0.01, nsd=3, fem_basis_deg=1, loss_type=loss_type, optimizer=optimizer)
 
     # ------------------------
     # 1 INIT TRAINER
@@ -342,7 +356,7 @@ def main():
     printsave = MyPrintingCallback()
 
     trainer = pl.Trainer(accelerator='gpu',devices=1,
-                         callbacks=[early_stopping,checkpoint,printsave],
+                         callbacks=[checkpoint,printsave],
                          logger=[logger,csv_logger],
                          max_epochs=max_epochs,
                          fast_dev_run=False
@@ -361,6 +375,9 @@ def main():
 
     # L2 error calculation
     print("Calculating L2 error:")
+    basecase.network.eval()
+    inputs, forcing = trainer.train_dataloader.dataset[0]
+    nu, f, u = printsave.do_query(trainer, basecase)
     basecase.calc_l2_err(u.detach())
 
 if __name__ == '__main__':
