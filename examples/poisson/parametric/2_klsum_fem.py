@@ -88,9 +88,50 @@ class Poisson(DiffNet2DFEM):
         schd = [torch.optim.lr_scheduler.MultiStepLR(opts[0], milestones=[10,15,30], gamma=0.1)]
         return opts, schd
 
-    def on_epoch_end(self):
-        num_query = 6
-        plt_num_row = num_query
+class MyPrintingCallback(pl.callbacks.Callback):
+    # def on_train_start(self, trainer, pl_module):
+    #     print("Training is starting")
+    # def on_train_end(self, trainer, pl_module):
+    #     print("Training is ending")
+    # def on_validation_epoch_end(self, trainer, pl_module):
+    #     print("On validation epoch end")
+
+    def __init__(self, **kwargs):
+        super(MyPrintingCallback, self).__init__(**kwargs)
+        self.num_query = 6
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        pl_module.network.eval()
+        nu, f, u = self.do_query(trainer, pl_module)
+        self.plot_contours(trainer, pl_module, nu, f, u)
+
+    def do_query(self, trainer, pl_module):
+        inputs, forcing = trainer.train_dataloader.dataset[0:self.num_query]
+        forcing = forcing.repeat(self.num_query,1,1,1)
+        # print("\ninference for: ", trainer.train_dataloader.dataset.coeffs[0:num_query])
+
+        u, inputs_tensor, forcing_tensor = pl_module.forward((inputs.type_as(next(pl_module.network.parameters())), forcing.type_as(next(pl_module.network.parameters()))))
+
+        # extract diffusivity and boundary conditions here
+        nu = inputs_tensor[:,0:1,:,:]
+        bc1 = inputs_tensor[:,1:2,:,:]
+        bc2 = inputs_tensor[:,2:3,:,:]
+
+        # apply boundary conditions
+        u = torch.where(bc1>0.5,1.0+u*0.0,u)
+        u = torch.where(bc2>0.5,u*0.0,u)
+
+        loss = pl_module.loss(u, inputs_tensor, forcing_tensor[:,0:1,:,:])
+        print("loss incurred for this coeff:", loss)
+
+        nu = nu.squeeze().detach().cpu()
+        f = forcing_tensor.squeeze().detach().cpu()
+        u = u.squeeze().detach().cpu()
+
+        return  nu, f, u
+
+    def plot_contours(self,trainer,pl_module,nu,f,u):
+        plt_num_row = self.num_query
         plt_num_col = 2
         fig, axs = plt.subplots(plt_num_row, plt_num_col, figsize=(2*plt_num_col,1.2*plt_num_row),
                             subplot_kw={'aspect': 'auto'}, sharex=True, sharey=True, squeeze=True)
@@ -98,40 +139,22 @@ class Poisson(DiffNet2DFEM):
             for ax in ax_row:
                 ax.set_xticks([])
                 ax.set_yticks([])
-        
-        self.network.eval()
-        inputs, forcing = self.dataset[0:num_query]
-        forcing = forcing.repeat(num_query,1,1,1)
-        print("\ninference for: ", self.dataset.coeffs[0:num_query])
 
-        ub, inputs_tensor, forcing_tensor = self.forward((inputs.type_as(next(self.network.parameters())), forcing.type_as(next(self.network.parameters()))))
-        
-        loss = self.loss(ub, inputs_tensor, forcing_tensor[:,0:1,:,:])
-        print("loss incurred for this coeff:", loss)        
+        for idx in range(self.num_query):
 
-        for idx in range(num_query):
-            f = forcing_tensor # renaming variable
-            
             # extract diffusivity and boundary conditions here
-            nu = inputs_tensor[idx,0:1,:,:]
-            u = ub[idx,0:1,:,:]
-            bc1 = inputs_tensor[idx,1:2,:,:]
-            bc2 = inputs_tensor[idx,2:3,:,:]
+            ki = nu[idx,:,:]
+            ui = u[idx,:,:]
 
-            # apply boundary conditions
-            u = torch.where(bc1>0.5,1.0+u*0.0,u)
-            u = torch.where(bc2>0.5,u*0.0,u)
-
-            k = nu.squeeze().detach().cpu()
-            u = u.squeeze().detach().cpu()
-
-            im0 = axs[idx][0].imshow(k,cmap='jet')
+            im0 = axs[idx][0].imshow(ki,cmap='jet')
             fig.colorbar(im0, ax=axs[idx,0])
-            im1 = axs[idx][1].imshow(u,cmap='jet')
+            im1 = axs[idx][1].imshow(ui,cmap='jet')
             fig.colorbar(im1, ax=axs[idx,1])  
-        plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
-        self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
+        plt.savefig(os.path.join(trainer.logger.log_dir, 'contour_' + str(trainer.current_epoch) + '.png'))
+        trainer.logger.experiment.add_figure('Contour Plots', fig, trainer.current_epoch)
         plt.close('all')
+       
+
 
 def main():
     kl_terms = 6
@@ -143,11 +166,13 @@ def main():
     max_epochs = int(np.ceil(200000 / (sample_size/batch_size)))
     print("Max_epochs = ", max_epochs)
 
+    printsave = MyPrintingCallback()
     dataset = KLSumStochastic(sobol_file, domain_size=domain_size, kl_terms=kl_terms)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
     # dataset = Dataset('../single_instance/example-coefficients.txt', domain_size=64)
     network = AE(in_channels=1, out_channels=1, dims=64, n_downsample=3)
     basecase = Poisson(network, batch_size=batch_size, domain_size=domain_size, learning_rate=LR)
+
 
     # ------------------------
     # 1 INIT TRAINER
@@ -174,7 +199,7 @@ def main():
     #                              save_last=True)
 
     trainer = pl.Trainer(accelerator='gpu',devices=1,
-                         callbacks=[early_stopping,checkpoint],
+                         callbacks=[early_stopping,checkpoint,printsave],
                          logger=[logger,csv_logger], 
                          max_epochs=max_epochs,
                          fast_dev_run=False

@@ -4,6 +4,7 @@ import json
 import math
 import torch
 import numpy as np
+import libconf
 
 import matplotlib
 # matplotlib.use("pgf")
@@ -24,6 +25,8 @@ from DiffNet.DiffNetFEM import DiffNet3DFEM
 from DiffNet.datasets.single_instances.cuboids import CuboidManufactured
 from torch.utils.data import DataLoader
 # from pytorch_lightning.pytorch.callbacks import Callback
+import time
+from utils import plot_losses
 
 
 class Poisson(DiffNet3DFEM):
@@ -211,6 +214,9 @@ class Poisson(DiffNet3DFEM):
         elif self.optimizer == "lbfgs":
             print("Choosing LBFGS")
             opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=10)]
+        elif self.optimizer == "sgd":
+            print("Choosing SGD")
+            opts = [torch.optim.SGD(self.network, lr=lr)]
         # opts = [torch.optim.Adam(self.network, lr=lr), torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
         return opts, []
 
@@ -328,19 +334,20 @@ class MyPrintingCallback(pl.callbacks.Callback):
         #         fig.colorbar(im, ax=axs[idx, 5])
 
 def main():
-    domain_size = 32
-    max_epochs = 50
-    loss_type = "energy"
-    # loss_type = "resmin"
-    optimizer = "lbfgs"
-    # optimizer = "adam"
+    with open('conf_e8_poisson3d.inp') as f:
+        cfg = libconf.load(f)
+    domain_size = cfg.domain_size
+    max_epochs = cfg.max_epochs
+    LR=cfg.LR
+    loss_type = cfg.loss_type # energy, resmin
+    optimizer = cfg.optimizer # adam, lbfgs, sgd
     print(f"Config = ({loss_type}, {optimizer})")
-    dir_string = "poisson-mms-resmin-3d"
+    dir_string = "poisson-mms-3d"
     u_tensor = np.ones((1,1,domain_size,domain_size,domain_size))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
     dataset = CuboidManufactured(domain_size=domain_size)
     dataloader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=4, pin_memory=True)
-    basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=0.01, nsd=3, fem_basis_deg=1, loss_type=loss_type, optimizer=optimizer)
+    basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=LR, nsd=3, fem_basis_deg=1, loss_type=loss_type, optimizer=optimizer)
 
     # ------------------------
     # 1 INIT TRAINER
@@ -365,13 +372,18 @@ def main():
     # ------------------------
     # 4 Training
     # ------------------------
-
+    ts = time.time()
     trainer.fit(basecase, dataloader)
+    te = time.time()
+    print("[TIMING] Trainer took {:.3f} sec".format(te-ts))
 
     # ------------------------
     # 5 SAVE NETWORK
     # ------------------------
     torch.save(basecase.network, os.path.join(logger.log_dir, 'network.pt'))
+    with open(os.path.join(logger.log_dir, 'conf.txt'), 'w') as f:
+        print(libconf.dumps(cfg), file=f)
+    plot_losses(logger.log_dir)
 
     # L2 error calculation
     print("Calculating L2 error:")

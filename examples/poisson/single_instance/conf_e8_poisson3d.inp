@@ -1,0 +1,10 @@
+domain_size = 16
+max_epochs = 50
+LR=1e-2
+
+loss_type = "energy"
+# loss_type = "resmin"
+
+optimizer = "lbfgs"
+# optimizer = "adam"
+# optimizer = "sgd"
