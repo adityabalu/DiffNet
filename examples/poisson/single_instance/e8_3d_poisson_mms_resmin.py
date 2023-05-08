@@ -6,6 +6,7 @@ import torch
 import numpy as np
 import libconf
 
+from attrdict import AttrDict
 import matplotlib
 # matplotlib.use("pgf")
 matplotlib.rcParams.update({
@@ -45,13 +46,14 @@ class Poisson(DiffNet3DFEM):
         # self.u_exact = self.exact_solution(self.dataset.xx,self.dataset.yy,self.dataset.zz)
         self.u_exact = self.exact_solution(dataset.xx,dataset.yy,dataset.zz)
         self.f_gp = self.forcing(self.xgp,self.ygp,self.zgp)
-        self.diffusivity = 1.
 
         # u_bc = np.zeros_like(dataset.xx)
         self.u_bc = torch.FloatTensor(self.u_exact)
 
-        self.optimizer = kwargs.get('optimizer', "lbfgs")
-        self.loss_type = kwargs.get('loss_type', "energy")
+        self.cfg = kwargs.get('cfg', AttrDict({'optimizer':"lbfgs", 'loss_type':"energy", 'plot_frequency':50}))
+        self.optimizer = self.cfg.optimizer
+        self.loss_type = self.cfg.loss_type
+        self.plot_frequency = self.cfg.plot_frequency
         if self.loss_type == "energy":
             self.loss_func = self.loss_EnergyMin
         elif self.loss_type == "resmin":
@@ -88,7 +90,7 @@ class Poisson(DiffNet3DFEM):
         dN_y_values = self.dN_y_values.type_as(u)
         dN_z_values = self.dN_z_values.type_as(u)
         gpw = self.gpw.type_as(u)
-        f_gp = self.f_gp.type_as(u)
+        f_gp = self.f_gp.type_as(u).unsqueeze(1)
         u_bc = self.u_bc.unsqueeze(0).unsqueeze(0).type_as(u)
 
         # extract diffusivity and boundary conditions here
@@ -99,7 +101,7 @@ class Poisson(DiffNet3DFEM):
 
         # DERIVE NECESSARY VALUES
         trnsfrm_jac = (0.5*self.h)**3
-        JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
+        JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(0).unsqueeze(0).type_as(u)
 
         # apply boundary conditions
         # NOTE: Adding the residual to u is very important
@@ -108,24 +110,27 @@ class Poisson(DiffNet3DFEM):
         # u = torch.where(bc1>0.5,1.0+u*0.0,u)
         u = torch.where(bc2>0.5,u_bc,u)
 
-        u_x_gp = self.gauss_pt_evaluation_der_x(u)
-        u_y_gp = self.gauss_pt_evaluation_der_y(u)
-        u_z_gp = self.gauss_pt_evaluation_der_z(u)
+        nu_gp = self.gauss_pt_evaluation(nu).unsqueeze(1)
+        u_x_gp = self.gauss_pt_evaluation_der_x(u).unsqueeze(1)
+        u_y_gp = self.gauss_pt_evaluation_der_y(u).unsqueeze(1)
+        u_z_gp = self.gauss_pt_evaluation_der_z(u).unsqueeze(1)
 
         # CALCULATION STARTS
         # lhs
-        vxux = dN_x_values*u_x_gp*JxW
-        vyuy = dN_y_values*u_y_gp*JxW
-        vzuz = dN_z_values*u_z_gp*JxW
+        vxux = dN_x_values*u_x_gp
+        vyuy = dN_y_values*u_y_gp
+        vzuz = dN_z_values*u_z_gp
         # rhs
-        vf = N_values*f_gp*JxW
+        vf = N_values*f_gp
+        # residual
+        residual = (nu_gp*(vxux+vyuy+vzuz) - vf)*JxW
 
         # integrated values on lhs & rhs
-        v_lhs = torch.sum(self.diffusivity*(vxux+vyuy+vzuz), 2) # sum across all GP
-        v_rhs = torch.sum(vf, 2) # sum across all gauss points
+        # v_lhs = torch.sum(, 2) # sum across all GP
+        # v_rhs = torch.sum(vf, 2) # sum across all gauss points
 
         # unassembled residual
-        R_split = v_lhs - v_rhs
+        R_split = torch.sum(residual, 2) # sum across all gauss points
         # assembly
         R = torch.zeros_like(u); R = self.Q1_3D_vector_assembly(R, R_split)
 
@@ -139,6 +144,7 @@ class Poisson(DiffNet3DFEM):
     def loss_EnergyMin(self, u, inputs_tensor, forcing_tensor):
 
         f_gp = self.f_gp.type_as(u)
+        u_bc = self.u_bc.unsqueeze(0).unsqueeze(0).type_as(u)
         
         # extract diffusivity and boundary conditions here
         nu = inputs_tensor[:,0:1,:,:,:]
@@ -146,8 +152,9 @@ class Poisson(DiffNet3DFEM):
         bc2 = inputs_tensor[:,2:3,:,:,:]
 
         # apply boundary conditions
-        u = torch.where(bc1>0.5,1.0+u*0.0,u)
-        u = torch.where(bc2>0.5,u*0.0,u)
+        # u = torch.where(bc1>0.5,1.0+u*0.0,u)
+        # u = torch.where(bc2>0.5,u*0.0,u)
+        u = torch.where(bc2>0.5,u_bc,u)
 
 
         nu_gp = self.gauss_pt_evaluation(nu)
@@ -232,12 +239,15 @@ class MyPrintingCallback(pl.callbacks.Callback):
         # print("On training epoch end")
         # print("pl_module name = ", pl_module.__class__.__name__)
         # print(trainer.train_dataloader.dataset)
-        pl_module.network.eval()
-        nu, f, u = self.do_query(trainer, pl_module)
-        nu = nu.detach().cpu().squeeze()
-        u = u.detach().cpu().squeeze()
-        f = f.detach().cpu().squeeze()
-        self.plot_contours(trainer, pl_module, nu, f, u)
+        if trainer.current_epoch % pl_module.cfg.plot_frequency == 0:
+            pl_module.network.eval()
+            nu, f, u = self.do_query(trainer, pl_module)
+            nu = nu.detach().cpu().squeeze()
+            u = u.detach().cpu().squeeze()
+            f = f.detach().cpu().squeeze()
+            self.plot_contours(trainer, pl_module, nu, f, u)
+            if trainer.current_epoch > 2:
+                plot_losses(trainer.logger.log_dir)
 
     def do_query(self, trainer, pl_module):
         inputs, forcing = trainer.train_dataloader.dataset[0]
@@ -339,15 +349,15 @@ def main():
     domain_size = cfg.domain_size
     max_epochs = cfg.max_epochs
     LR=cfg.LR
-    loss_type = cfg.loss_type # energy, resmin
-    optimizer = cfg.optimizer # adam, lbfgs, sgd
-    print(f"Config = ({loss_type}, {optimizer})")
+    # loss_type = cfg.loss_type # energy, resmin
+    # optimizer = cfg.optimizer # adam, lbfgs, sgd
+    print(f"Config = ({cfg.loss_type}, {cfg.optimizer})")
     dir_string = "poisson-mms-3d"
     u_tensor = np.ones((1,1,domain_size,domain_size,domain_size))
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
     dataset = CuboidManufactured(domain_size=domain_size)
     dataloader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=4, pin_memory=True)
-    basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=LR, nsd=3, fem_basis_deg=1, loss_type=loss_type, optimizer=optimizer)
+    basecase = Poisson(network, dataset, batch_size=1, domain_size=domain_size, learning_rate=LR, nsd=3, fem_basis_deg=1, cfg=cfg)
 
     # ------------------------
     # 1 INIT TRAINER
@@ -383,7 +393,6 @@ def main():
     torch.save(basecase.network, os.path.join(logger.log_dir, 'network.pt'))
     with open(os.path.join(logger.log_dir, 'conf.txt'), 'w') as f:
         print(libconf.dumps(cfg), file=f)
-    plot_losses(logger.log_dir)
 
     # L2 error calculation
     print("Calculating L2 error:")

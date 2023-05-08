@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 #######################################################################
-source /work/baskarg/bkhara/python_virtual_envs/lightning/bin/activate
+source /work/mech-ai/bkhara/python_virtual_envs/lightning/bin/activate
 
 export CUDA_DEVICE_ORDER="PCI_BUS_ID"
 export CUDA_VISIBLE_DEVICES="1"  # specify which GPU(s) to be used
@@ -12,7 +12,7 @@ echo "Working directory = ${CASE_DIR}"
 ########## NO CHANGE ABOVE ############################################
 #######################################################################
 
-# TRAIN_SCRIPT="12_klsum.py"
+TRAIN_SCRIPT="12_klsum.py"
 # TRAIN_SCRIPT="12_klsum_fdm.py"
 # TRAIN_SCRIPT="10_manufactured_strong_form_higher_order.py"
 # TRAIN_SCRIPT="12_fdm_mms.py"
@@ -32,6 +32,13 @@ echo "Working directory = ${CASE_DIR}"
 # TRAIN_SCRIPT="e17_adv_diff_2d_resmin.py"
 # TRAIN_SCRIPT="e17_adv_diff_2d_resmin_network.py"
 # TRAIN_SCRIPT="e18_allen_cahn_ice_melt.py"
-TRAIN_SCRIPT="pc_complex_immersed_background.py"
+# TRAIN_SCRIPT="pc_complex_immersed_background.py"
 # TRAIN_SCRIPT="pc_poisson_disk.py"
-time python ${TRAIN_SCRIPT} #>out_train.txt 2>&1
+# TRAIN_SCRIPT="e8_3d_poisson_mms_resmin.py"
+
+if [[ $1 == "d" ]]; then
+	echo "Starting debug mode"
+	python -m pdb ${TRAIN_SCRIPT} #>out_train.txt 2>&1
+else
+	time python ${TRAIN_SCRIPT} #>out_train.txt 2>&1
+fi

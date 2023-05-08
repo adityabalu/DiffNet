@@ -5,6 +5,7 @@ import torch
 import numpy as np
 import libconf
 
+from attrdict import AttrDict
 import matplotlib
 # matplotlib.use("pgf")
 matplotlib.rcParams.update({
@@ -23,6 +24,7 @@ from DiffNet.networks.wgan import GoodNetwork
 from DiffNet.DiffNetFEM import DiffNet2DFEM
 from DiffNet.datasets.single_instances.klsum import Dataset
 from torch.utils.data import DataLoader
+from utils import plot_losses
 
 
 class Poisson(DiffNet2DFEM):
@@ -30,12 +32,23 @@ class Poisson(DiffNet2DFEM):
     def __init__(self, network, **kwargs):
         super(Poisson, self).__init__(network, **kwargs)
 
-        self.optimizer = kwargs.get('optimizer', "lbfgs")
-        self.loss_type = kwargs.get('loss_type', "energy")
+        # self.f_gp = self.forcing(self.xgp,self.ygp)
+
+        self.cfg = kwargs.get('cfg', AttrDict({'optimizer':"lbfgs", 'loss_type':"energy", 'plot_frequency':50}))
+        self.optimizer = self.cfg.optimizer
+        self.loss_type = self.cfg.loss_type
+        self.plot_frequency = self.cfg.plot_frequency
         if self.loss_type == "energy":
             self.loss_func = self.loss_EnergyMin
         elif self.loss_type == "resmin":
             self.loss_func = self.loss_ResMin
+
+    def Q1_2D_vector_assembly(self, Aglobal, Aloc_all):
+        Aglobal[:,0, 0:-1, 0:-1] += Aloc_all[:,0, :, :]
+        Aglobal[:,0, 0:-1, 1:  ] += Aloc_all[:,1, :, :]
+        Aglobal[:,0, 1:  , 0:-1] += Aloc_all[:,2, :, :]
+        Aglobal[:,0, 1:  , 1:  ] += Aloc_all[:,3, :, :]
+        return Aglobal
 
     def loss_EnergyMin(self, u, inputs_tensor, forcing_tensor):
 
@@ -65,7 +78,58 @@ class Poisson(DiffNet2DFEM):
         return loss
 
     def loss_ResMin(self, u, inputs_tensor, forcing_tensor):
-        pass
+        N_values = self.Nvalues.type_as(u)
+        dN_x_values = self.dN_x_values.type_as(u)
+        dN_y_values = self.dN_y_values.type_as(u)
+        gpw = self.gpw.type_as(u)
+        # f_gp = self.f_gp.type_as(u)
+        # u_bc = self.u_bc.unsqueeze(0).unsqueeze(0).type_as(u)
+
+        # extract diffusivity and boundary conditions here
+        f = forcing_tensor # renaming variable
+        nu = inputs_tensor[:,0:1,:,:]
+        bc1 = inputs_tensor[:,1:2,:,:]
+        bc2 = inputs_tensor[:,2:3,:,:]
+
+        # DERIVE NECESSARY VALUES
+        trnsfrm_jac = 1.0 # (0.5*self.h)**2
+        JxW = (gpw*trnsfrm_jac).unsqueeze(-1).unsqueeze(-1).unsqueeze(0).unsqueeze(0)
+
+        # apply boundary conditions
+        # NOTE: Adding the residual to u is very important
+        #       After this step, "u" is complete with BCs
+        #       We later need to do another BC operation after the residual R is calculated
+        # u = torch.where(bc1>0.5,1.0+u*0.0,u)
+        # u = torch.where(bc2>0.5,u_bc,u)
+        u = torch.where(bc1>0.5,1.0+u*0.0,u)
+        u = torch.where(bc2>0.5,u*0.0,u)
+
+        nu_gp = self.gauss_pt_evaluation(nu).unsqueeze(1)
+        f_gp = self.gauss_pt_evaluation(f).unsqueeze(1)
+        u_x_gp = self.gauss_pt_evaluation_der_x(u).unsqueeze(1)
+        u_y_gp = self.gauss_pt_evaluation_der_y(u).unsqueeze(1)
+        # u_z_gp = self.gauss_pt_evaluation_der_z(u)
+
+        # CALCULATION STARTS
+        lhs = nu_gp*(dN_x_values*u_x_gp + dN_y_values*u_y_gp)*JxW
+        rhs = N_values*f_gp*JxW
+
+        # integrated values on lhs & rhs
+        v_lhs = torch.sum(lhs, 2) # sum across all gauss points
+        v_rhs = torch.sum(rhs, 2) # sum across all gauss points
+
+        # unassembled residual
+        R_split = v_lhs - v_rhs
+        # assembly
+        R = torch.zeros_like(u); R = self.Q1_2D_vector_assembly(R, R_split)
+
+        # Boundary operation on residual <---- below step is very important
+        # Set the residuals on the Dirichlet boundaries to zero 
+        R = torch.where(bc1>0.5,R*0.0,R)
+        R = torch.where(bc2>0.5,R*0.0,R)
+
+        loss = torch.sum(R**2)
+        return loss
 
     def forward(self, batch):
         inputs_tensor, forcing_tensor = batch
@@ -85,8 +149,16 @@ class Poisson(DiffNet2DFEM):
         Configure optimizer for network parameters
         """
         lr = self.learning_rate
-        # opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
-        opts = [torch.optim.Adam(self.network, lr=3e-4)]
+        if self.optimizer == "adam":
+            print("Choosing Adam")
+            opts = [torch.optim.Adam(self.network, lr=lr)]
+        elif self.optimizer == "lbfgs":
+            print("Choosing LBFGS")
+            opts = [torch.optim.LBFGS(self.network, lr=1.0, max_iter=10)]
+        elif self.optimizer == "sgd":
+            print("Choosing SGD")
+            opts = [torch.optim.SGD(self.network, lr=lr)]
+        # opts = [torch.optim.Adam(self.network, lr=lr), torch.optim.LBFGS(self.network, lr=1.0, max_iter=5)]
         return opts, []
 
     def on_epoch_end(self):
@@ -137,10 +209,13 @@ class MyPrintingCallback(pl.callbacks.Callback):
         self.num_query = 2
 
     def on_train_epoch_end(self, trainer, pl_module):
-        pl_module.network.eval()
-        nu, f, u = self.do_query(trainer, pl_module)
-        # self.plot_contours(trainer, pl_module, nu, f, u)
-        self.plot_contours(trainer, pl_module, torch.tile(nu,(self.num_query,1,1)), torch.tile(f,(self.num_query,1,1)), torch.tile(u,(self.num_query,1,1)))
+        if trainer.current_epoch % pl_module.cfg.plot_frequency == 0:
+            pl_module.network.eval()
+            nu, f, u = self.do_query(trainer, pl_module)
+            # self.plot_contours(trainer, pl_module, nu, f, u)
+            self.plot_contours(trainer, pl_module, torch.tile(nu,(self.num_query,1,1)), torch.tile(f,(self.num_query,1,1)), torch.tile(u,(self.num_query,1,1)))
+            if trainer.current_epoch > 2:
+                plot_losses(trainer.logger.log_dir)
 
     def do_query(self, trainer, pl_module):
         inputs, forcing = trainer.train_dataloader.dataset[0:self.num_query]
@@ -197,10 +272,9 @@ def main():
     domain_size = cfg.domain_size
     max_epochs = cfg.max_epochs
     LR=cfg.LR
-    loss_type = cfg.loss_type # energy, resmin
-    optimizer = cfg.optimizer # adam, lbfgs, sgd
-    kl_coeff_file = cfg.kl_coeff_file
-    print(f"Config = ({loss_type}, {optimizer})")
+    # loss_type = cfg.loss_type # energy, resmin
+    # optimizer = cfg.optimizer # adam, lbfgs, sgd
+    print(f"Config = ({cfg.loss_type}, {cfg.optimizer})")
     
     dir_string = "klsum"
     
@@ -208,9 +282,9 @@ def main():
 
     printsave = MyPrintingCallback()
     network = torch.nn.ParameterList([torch.nn.Parameter(torch.FloatTensor(u_tensor), requires_grad=True)])
-    dataset = Dataset(kl_coeff_file, domain_size=domain_size)
+    dataset = Dataset(cfg.kl_coeff_file, domain_size=domain_size)
     dataloader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=4, pin_memory=True)
-    basecase = Poisson(network, batch_size=1, loss_type=loss_type, optimizer=optimizer)
+    basecase = Poisson(network, batch_size=1, learning_rate=LR, cfg=cfg)
 
     # ------------------------
     # 1 INIT TRAINER
@@ -228,7 +302,7 @@ def main():
     #     checkpoint_callback=checkpoint, logger=[logger,csv_logger],
     #     max_epochs=10, deterministic=True, profiler="simple")
     trainer = pl.Trainer(accelerator='gpu',devices=1,
-                         callbacks=[early_stopping,checkpoint,printsave],
+                         callbacks=[checkpoint,printsave],
                          logger=[logger,csv_logger],
                          max_epochs=max_epochs,
                          fast_dev_run=False
@@ -244,6 +318,8 @@ def main():
     # 5 SAVE NETWORK
     # ------------------------
     torch.save(basecase.network, os.path.join(logger.log_dir, 'network.pt'))
+    with open(os.path.join(logger.log_dir, 'conf.txt'), 'w') as f:
+        print(libconf.dumps(cfg), file=f)
 
 
 if __name__ == '__main__':
