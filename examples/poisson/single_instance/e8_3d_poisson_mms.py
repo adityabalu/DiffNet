@@ -45,7 +45,7 @@ class Poisson(DiffNet3DFEM):
         # xx, yy, zz = self.meshgrid_3d(x_1d, y_1d, z_1d)
         # self.u_exact = self.exact_solution(self.dataset.xx,self.dataset.yy,self.dataset.zz)
         self.u_exact = self.exact_solution(dataset.xx,dataset.yy,dataset.zz)
-        self.f_gp = self.forcing(self.xgp,self.ygp,self.zgp)
+        self.f_gp = self.forcing_func(self.xgp,self.ygp,self.zgp)
 
         # u_bc = np.zeros_like(dataset.xx)
         self.u_bc = torch.FloatTensor(self.u_exact)
@@ -61,16 +61,18 @@ class Poisson(DiffNet3DFEM):
 
 
     def exact_solution(self, x,y,z):
+        m = 1.; n = 2.; p = 3.
         pi = math.pi
         sin = np.sin
         cos = np.cos
-        return sin(pi*x)*sin(3.*pi*y)*sin(3.*pi*z)
+        return sin(m*pi*x)*sin(n*pi*y)*sin(p*pi*z)
 
-    def forcing(self,x,y,z):
+    def forcing_func(self,x,y,z):
+        m = 1.; n = 2.; p = 3.
         pi = math.pi
         sin = np.sin
         cos = np.cos
-        f = 19. * pi**2 * sin(pi*x)*sin(3.*pi*y)*sin(3*pi*z)
+        f = (m**2 + n**2 + p**2) * pi**2 * sin(m*pi*x)*sin(n*pi*y)*sin(p*pi*z)
         return f
 
     def Q1_3D_vector_assembly(self, Aglobal, Aloc_all):
@@ -95,9 +97,9 @@ class Poisson(DiffNet3DFEM):
 
         # extract diffusivity and boundary conditions here
         f = forcing_tensor # renaming variable
-        nu = inputs_tensor[:,0:1,:,:]
-        bc1 = inputs_tensor[:,1:2,:,:]
-        bc2 = inputs_tensor[:,2:3,:,:]
+        nu = inputs_tensor[:,0:1,...]
+        bc1 = inputs_tensor[:,1:2,...]
+        bc2 = inputs_tensor[:,2:3,...]
 
         # DERIVE NECESSARY VALUES
         trnsfrm_jac = (0.5*self.h)**3
@@ -116,21 +118,16 @@ class Poisson(DiffNet3DFEM):
         u_z_gp = self.gauss_pt_evaluation_der_z(u).unsqueeze(1)
 
         # CALCULATION STARTS
-        # lhs
         vxux = dN_x_values*u_x_gp
         vyuy = dN_y_values*u_y_gp
         vzuz = dN_z_values*u_z_gp
-        # rhs
-        vf = N_values*f_gp
+        lhs = nu_gp * (vxux+vyuy+vzuz)
+        rhs = N_values*f_gp
         # residual
-        residual = (nu_gp*(vxux+vyuy+vzuz) - vf)*JxW
-
-        # integrated values on lhs & rhs
-        # v_lhs = torch.sum(, 2) # sum across all GP
-        # v_rhs = torch.sum(vf, 2) # sum across all gauss points
+        residual = lhs-rhs
 
         # unassembled residual
-        R_split = torch.sum(residual, 2) # sum across all gauss points
+        R_split = torch.sum(residual*JxW, 2) # sum across all gauss points
         # assembly
         R = torch.zeros_like(u); R = self.Q1_3D_vector_assembly(R, R_split)
 
@@ -147,9 +144,9 @@ class Poisson(DiffNet3DFEM):
         u_bc = self.u_bc.unsqueeze(0).unsqueeze(0).type_as(u)
         
         # extract diffusivity and boundary conditions here
-        nu = inputs_tensor[:,0:1,:,:,:]
-        bc1 = inputs_tensor[:,1:2,:,:,:]
-        bc2 = inputs_tensor[:,2:3,:,:,:]
+        nu = inputs_tensor[:,0:1,...]
+        bc1 = inputs_tensor[:,1:2,...]
+        bc2 = inputs_tensor[:,2:3,...]
 
         # apply boundary conditions
         # u = torch.where(bc1>0.5,1.0+u*0.0,u)
@@ -257,9 +254,9 @@ class MyPrintingCallback(pl.callbacks.Callback):
         f = forcing_tensor
         
         # extract diffusivity and boundary conditions here
-        nu = inputs_tensor[:,0:1,:,:]
-        bc1 = inputs_tensor[:,1:2,:,:]
-        bc2 = inputs_tensor[:,2:3,:,:]
+        nu = inputs_tensor[:,0:1,...]
+        bc1 = inputs_tensor[:,1:2,...]
+        bc2 = inputs_tensor[:,2:3,...]
 
         # apply boundary conditions
         u = torch.where(bc1>0.5,1.0+u*0.0,u)
@@ -344,7 +341,7 @@ class MyPrintingCallback(pl.callbacks.Callback):
         #         fig.colorbar(im, ax=axs[idx, 5])
 
 def main():
-    with open('conf_e8_poisson3d.inp') as f:
+    with open('conf_e8_3d.inp') as f:
         cfg = libconf.load(f)
     domain_size = cfg.domain_size
     max_epochs = cfg.max_epochs

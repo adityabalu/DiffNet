@@ -19,7 +19,15 @@ def plot_losses(casepath, delimiter=','):
 	data = np.loadtxt(os.path.join(casepath, 'metrics.csv'), delimiter=delimiter, skiprows=1)
 	epoch = data[:,1]
 	loss = data[:,0]
-	plt.plot(epoch, np.log10(loss))
+	plt.plot(epoch, loss)
 	plt.xlabel('epoch')
 	plt.ylabel('loss')
 	plt.savefig(os.path.join(casepath, 'lossplot.png'))
+	plt.close()
+
+	plt.plot(epoch, np.log10(loss))
+	plt.xlabel('epoch')
+	plt.ylabel('log10(loss)')
+	plt.savefig(os.path.join(casepath, 'lossplot_log.png'))
+	plt.close()
+	

@@ -50,8 +50,8 @@ class RectangleManufactured(data.Dataset):
         self.n_samples = 100
         x = np.linspace(0,1,domain_size)
         y = np.linspace(0,1,domain_size)
-        xx, yy = np.meshgrid(x,y)
-        self.forcing = 2. * math.pi**2 * np.sin(math.pi * xx) * np.sin(math.pi * yy)
+        self.xx, self.yy = np.meshgrid(x,y)
+        self.forcing = 2. * math.pi**2 * np.sin(math.pi * self.xx) * np.sin(math.pi * self.yy)
         
 
     def __len__(self):
