@@ -4,6 +4,7 @@ import json
 import math
 import torch
 import numpy as np
+import scipy
 import time
 import libconf
 
@@ -27,7 +28,16 @@ from DiffNet.networks.wgan import GoodNetwork
 from DiffNet.DiffNetFEM import DiffNet2DFEM
 from DiffNet.datasets.single_instances.rectangles import RectangleManufactured
 from torch.utils.data import DataLoader
-from utils import plot_losses
+from utils import plot_losses, load_ilu_data
+
+class sparse_data(object):
+    """docstring for sparse_data"""
+    def __init__(self, rows, cols, data):
+        super(sparse_data, self).__init__()
+        self.nx = rows[-1]
+        self.ny = cols[-1]
+        self.idx = torch.IntTensor(np.vstack((rows-1, cols-1)))
+        self.data = torch.FloatTensor(data)
 
 class Poisson(DiffNet2DFEM):
     """docstring for Poisson"""
@@ -47,6 +57,15 @@ class Poisson(DiffNet2DFEM):
         elif self.loss_type == "resmin":
             self.loss_func = self.loss_ResMin
 
+        # precondata = scipy.io.loadmat('invL_2d_32x32.mat')
+        # invL = precondata['invL']
+        # rows = precondata['rows'].squeeze().astype(np.short)
+        # cols = precondata['cols'].squeeze().astype(np.short)
+        # data = precondata['data'].squeeze()
+        # self.invLdata = sparse_data(rows, cols, data)
+
+        invL, invLt = load_ilu_data('invL_2d_32x32.mat')
+        self.invL = invL.to_dense()
 
     def exact_solution(self, x,y):
         m = 3.; n = 2.
@@ -77,6 +96,11 @@ class Poisson(DiffNet2DFEM):
         gpw = self.gpw.type_as(u)
         f_gp = self.f_gp.type_as(u).unsqueeze(1)
         u_bc = self.u_bc.unsqueeze(0).unsqueeze(0).type_as(u)
+        invL = self.invL.unsqueeze(0).unsqueeze(0).type_as(u)
+        invLt = torch.t(self.invL).unsqueeze(0).unsqueeze(0)
+        # p_idx = self.invLdata.idx.to(u.device)
+        # p_data = self.invLdata.data.to(u.device)
+        # invL = torch.sparse_coo_tensor(p_idx, p_data, (self.invLdata.nx, self.invLdata.ny)).unsqueeze(0).unsqueeze(0)
 
         # extract diffusivity and boundary conditions here
         f = forcing_tensor # renaming variable
@@ -116,7 +140,13 @@ class Poisson(DiffNet2DFEM):
         # Set the residuals on the Dirichlet boundaries to zero 
         R = torch.where(bc2>0.5,R*0.0,R)
 
-        loss = torch.sum(R**2)
+        # preconditioning
+        Rvec = R.reshape(1,1,-1,1)
+        Mr = torch.matmul(invL, Rvec)
+        # Mr = torch.matmul(invLt, Mr)
+
+        # loss = torch.sum(R**2)
+        loss = torch.sum(Mr**2)
         return loss
 
     def loss_EnergyMin(self, u, inputs_tensor, forcing_tensor):
