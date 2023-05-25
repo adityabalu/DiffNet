@@ -85,7 +85,7 @@ class PointClouds(data.Dataset):
 
 
 
-
+# Winding number computation for in-outs
 def compute_winding_nodes(points, normals, area, q):
     points = points.view(points.size(0), points.size(2), points.size(3)).permute(0, 2, 1)
     normals = normals.view(normals.size(0), normals.size(2), normals.size(3)).permute(0, 2, 1)
@@ -174,11 +174,12 @@ def main(args):
     domain_size = 32
     LR = 3e-4
     batch_size = args.batch_size
-    max_epochs = batch_size
+    max_epochs = 1
     print("Max_epochs = ", max_epochs)
-
-    train_dataset = PointClouds('/data/EthanHerron/DiffNet/DiffNet/DiffNet/datasets/parametric/nurbs/', 'train', domain_size)
-    val_dataset = PointClouds('/data/EthanHerron/DiffNet/DiffNet/DiffNet/datasets/parametric/nurbs/', 'val', domain_size)
+    
+    data_path = 'Insert correct data path'
+    train_dataset = PointClouds(data_path, 'train', domain_size)
+    val_dataset = PointClouds(data_path, 'val', domain_size)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
 
@@ -188,16 +189,18 @@ def main(args):
     # ------------------------
     # 1 INIT TRAINER
     # ------------------------
-    wandb_logger = WandbLogger(project='IBN', 
-                               log_model='all')
+    
+    # Insert desired logger (optional)
+    # wandb_logger = WandbLogger(project='IBN', 
+    #                            log_model='all')
     
     checkpoint = ModelCheckpoint(monitor='train_loss',
                                  mode='min', 
                                  save_last=True)
 
-    trainer = pl.Trainer(gpus=[0],
+    trainer = pl.Trainer(devices=1,
                          callbacks=[checkpoint],
-                         logger=wandb_logger, 
+                         # logger=wandb_logger, # uncomment or replace with desired logger
                          max_epochs=max_epochs,
                          fast_dev_run=args.debug)
 
@@ -209,7 +212,7 @@ def main(args):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='CAD IBN Results Compilation')
+    parser = argparse.ArgumentParser(description='2D IBN example problem - Poisson Eqn')
     parser.add_argument('-b','--batch_size', default=512, type=int,
                         help='Batch size')
     parser.add_argument('--debug', default=False, type=bool,

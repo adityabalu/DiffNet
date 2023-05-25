@@ -5,7 +5,7 @@ DiffNet: A FEM based neural PDE solver package
 After cloning the repo, do:
 ```sh
 cd DiffNet
-python setup.py develop
+python setup.py develop --user
 ```
 
 # Examples
