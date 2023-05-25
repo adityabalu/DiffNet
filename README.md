@@ -9,8 +9,11 @@ python setup.py develop
 ```
 
 # Examples
-Run a stochastic Poisson problem as:
+Generalizable Poisson Solver:
+
+Download a dataset of randomly generated shapes at https://iastate.box.com/s/u7pbj2eby4ckr23eyx86oksksz8masbe. One dataset used in \emph{Neural PDE Solvers for Irregular Domains}, (https://arxiv.org/abs/2211.03241, Fig. 3a).
+
 ```sh
 cd DiffNet/examples/poisson/parametric
-python 2_klsum.py
+python IBN_2D.py
 ```
