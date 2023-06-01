@@ -22,12 +22,13 @@ from DiffNet.networks.wgan import GoodNetwork
 from DiffNet.networks.unets import UNet
 from DiffNet.DiffNetFEM import DiffNet2DFEM
 from DiffNet.datasets.parametric.images import ImageIMBack
+from torch.utils.data import DataLoader
 
 
 class Poisson(DiffNet2DFEM):
     """docstring for Poisson"""
-    def __init__(self, network, dataset, **kwargs):
-        super(Poisson, self).__init__(network, dataset, **kwargs)
+    def __init__(self, network, **kwargs):
+        super(Poisson, self).__init__(network, **kwargs)
 
     def loss(self, u, inputs_tensor, forcing_tensor):
 
@@ -64,13 +65,14 @@ class Poisson(DiffNet2DFEM):
     def training_step(self, batch, batch_idx):
         u, inputs_tensor, forcing_tensor = self.forward(batch)
         loss_val = self.loss(u, inputs_tensor, forcing_tensor).mean()
-        return {"loss": loss_val}
+        self.log("loss", loss_val)
+        return loss_val
 
-    def training_step_end(self, training_step_outputs):
-        loss = training_step_outputs["loss"]
-        self.log('PDE_loss', loss.item())
-        self.log('loss', loss.item())
-        return training_step_outputs
+    # def training_step_end(self, training_step_outputs):
+    #     loss = training_step_outputs["loss"]
+    #     self.log('PDE_loss', loss.item())
+    #     self.log('loss', loss.item())
+    #     return training_step_outputs
 
     def configure_optimizers(self):
         lr = self.learning_rate
@@ -78,18 +80,30 @@ class Poisson(DiffNet2DFEM):
         opts = [torch.optim.Adam(self.network.parameters(), lr=lr)]
         return opts, []
 
-    def on_epoch_end(self):
-        self.network.eval()
-        inputs, forcing = self.dataset[0:6]
-        nu, f, u = self.do_query(inputs, forcing)
-        self.plot_contours(nu, f, u)
+class MyPrintingCallback(pl.callbacks.Callback):
+    # def on_train_start(self, trainer, pl_module):
+    #     print("Training is starting")
+    # def on_train_end(self, trainer, pl_module):
+    #     print("Training is ending")
+    # def on_validation_epoch_end(self, trainer, pl_module):
+    #     print("On validation epoch end")
 
-    def do_query(self, inputs, forcing):
-        # u, inputs_tensor, forcing_tensor = self.forward((inputs.unsqueeze(0).type_as(next(self.network.parameters())), forcing.unsqueeze(0).type_as(next(self.network.parameters()))))
-        u, inputs_tensor, forcing_tensor = self.forward((inputs.type_as(next(self.network.parameters())), forcing.type_as(next(self.network.parameters()))))
+    def __init__(self, **kwargs):
+        super(MyPrintingCallback, self).__init__(**kwargs)
+        self.num_query = 6
 
-        f = forcing_tensor # renaming variable
-        
+    def on_train_epoch_end(self, trainer, pl_module):
+        pl_module.network.eval()
+        nu, f, u = self.do_query(trainer, pl_module)
+        self.plot_contours(trainer, pl_module, nu, f, u)
+
+    def do_query(self, trainer, pl_module):
+        inputs, forcing = trainer.train_dataloader.dataset[0:self.num_query]
+        forcing = forcing.repeat(self.num_query,1,1,1)
+        # print("\ninference for: ", trainer.train_dataloader.dataset.coeffs[0:num_query])
+
+        u, inputs_tensor, forcing_tensor = pl_module.forward((inputs.type_as(next(pl_module.network.parameters())), forcing.type_as(next(pl_module.network.parameters()))))
+
         # extract diffusivity and boundary conditions here
         nu = inputs_tensor[:,0:1,:,:]
         bc1 = inputs_tensor[:,1:2,:,:]
@@ -99,49 +113,54 @@ class Poisson(DiffNet2DFEM):
         u = torch.where(bc1>0.5,1.0+u*0.0,u)
         u = torch.where(bc2>0.5,u*0.0,u)
 
-        nu = nu.squeeze().detach().cpu()
-        u = u.squeeze().detach().cpu()
-        
-        return nu, f, u
+        # loss = pl_module.loss(u, inputs_tensor, forcing_tensor[:,0:1,:,:])
+        # print("loss incurred for this coeff:", loss)
 
-    def plot_contours(self,nu,f,u):
-        # plotting        
-        num_query = nu.shape[0]
-        plt_num_row = num_query
+        nu = nu.squeeze().detach().cpu()
+        f = forcing_tensor.squeeze().detach().cpu()
+        u = u.squeeze().detach().cpu()
+
+        return  nu, f, u
+
+    def plot_contours(self,trainer,pl_module,nu,f,u):
+        plt_num_row = self.num_query
         plt_num_col = 2
         fig, axs = plt.subplots(plt_num_row, plt_num_col, figsize=(2*plt_num_col,1.2*plt_num_row),
                             subplot_kw={'aspect': 'auto'}, sharex=True, sharey=True, squeeze=True)
         for ax_row in axs:
             for ax in ax_row:
                 ax.set_xticks([])
-                ax.set_yticks([])            
-        
-        for idx in range(num_query):
+                ax.set_yticks([])
+
+        for idx in range(self.num_query):
+
             # extract diffusivity and boundary conditions here
-            kp = nu[idx,:,:]
-            up = u[idx,:,:]
-            
-            im0 = axs[idx][0].imshow(kp,cmap='jet')
+            ki = nu[idx,:,:]
+            ui = u[idx,:,:]
+
+            im0 = axs[idx][0].imshow(ki,cmap='jet')
             fig.colorbar(im0, ax=axs[idx,0])
-            im1 = axs[idx][1].imshow(up,cmap='jet')
+            im1 = axs[idx][1].imshow(ui,cmap='jet')
             fig.colorbar(im1, ax=axs[idx,1])  
-        plt.savefig(os.path.join(self.logger[0].log_dir, 'contour_' + str(self.current_epoch) + '.png'))
-        self.logger[0].experiment.add_figure('Contour Plots', fig, self.current_epoch)
+        plt.savefig(os.path.join(trainer.logger.log_dir, 'contour_' + str(trainer.current_epoch) + '.png'))
+        trainer.logger.experiment.add_figure('Contour Plots', fig, trainer.current_epoch)
         plt.close('all')
 
 def main():
     load_from_prev = False
-    # dirname = '../ImageDataset'
-    dirname = '../AirfoilImageSet'
+    dirname = '../ImageDataset'
+    # dirname = '../AirfoilImageSet'
     load_prev_path = './complex_immersed_background/version_59'
+    batch_size = 16
     dataset = ImageIMBack(dirname, domain_size=256)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
 
     if load_from_prev:
         network = torch.load(os.path.join(load_prev_path, 'network.pt'))
     else:
         # network = GoodNetwork(in_channels=2, out_channels=1, in_dim=64, out_dim=64)
         network = UNet(in_channels=2, out_channels=1)
-    basecase = Poisson(network, dataset, batch_size=16, domain_size=256)
+    basecase = Poisson(network, batch_size=batch_size, domain_size=256)
 
     # ------------------------
     # 1 INIT TRAINER
@@ -154,21 +173,28 @@ def main():
     checkpoint = pl.callbacks.model_checkpoint.ModelCheckpoint(monitor='loss',
         dirpath=logger.log_dir, filename='{epoch}-{step}',
         mode='min', save_last=True)
+    printsave = MyPrintingCallback()
 
-    trainer = Trainer(gpus=[0],callbacks=[early_stopping],
-        checkpoint_callback=checkpoint, logger=[logger,csv_logger],
-        max_epochs=150, deterministic=True, profiler='simple')
+    # trainer = Trainer(gpus=[0],callbacks=[early_stopping],
+    #     checkpoint_callback=checkpoint, logger=[logger,csv_logger],
+    #     max_epochs=150, deterministic=True, profiler='simple')
+    trainer = pl.Trainer(accelerator='gpu',devices=1,
+                         callbacks=[early_stopping,checkpoint,printsave],
+                         logger=[logger,csv_logger], 
+                         max_epochs=150,
+                         fast_dev_run=False
+                         )
 
     # ------------------------
     # 4 Training
     # ------------------------
 
-    trainer.fit(basecase)
+    trainer.fit(basecase, dataloader)
 
     # ------------------------
     # 5 SAVE NETWORK
     # ------------------------
-    torch.save(basecase.network, os.path.join(logger.log_dir, 'network.pt'))
+    torch.save(basecase.network, os.path.join(trainer.logger.log_dir, 'network.pt'))
 
 
 if __name__ == '__main__':
