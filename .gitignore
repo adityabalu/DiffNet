@@ -117,4 +117,4 @@ examples/eiqonal/single_instance/curve_reconstruction/Sol2.png
 *.mat
 *.out
 *.err
-examples/poisson/parametric
+# examples/poisson/parametric
