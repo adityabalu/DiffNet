@@ -94,11 +94,11 @@ class MyPrintingCallback(pl.callbacks.Callback):
 
     def on_train_epoch_end(self, trainer, pl_module):
         pl_module.network.eval()
-        nu, f, u = self.do_query(trainer, pl_module)
+        inputs, forcing = trainer.train_dataloader.dataset[0:self.num_query]
+        nu, f, u = self.do_query(trainer, pl_module, inputs, forcing)
         self.plot_contours(trainer, pl_module, nu, f, u)
 
-    def do_query(self, trainer, pl_module):
-        inputs, forcing = trainer.train_dataloader.dataset[0:self.num_query]
+    def do_query(self, trainer, pl_module, inputs, forcing):
         forcing = forcing.repeat(self.num_query,1,1,1)
         # print("\ninference for: ", trainer.train_dataloader.dataset.coeffs[0:num_query])
 
@@ -169,7 +169,7 @@ def main():
     csv_logger = pl.loggers.CSVLogger(logger.save_dir, name=logger.name, version=logger.version)
 
     early_stopping = pl.callbacks.early_stopping.EarlyStopping('loss',
-        min_delta=1e-8, patience=10, verbose=False, mode='max', strict=True)
+        min_delta=1e-8, patience=50, verbose=False, mode='max', strict=True)
     checkpoint = pl.callbacks.model_checkpoint.ModelCheckpoint(monitor='loss',
         dirpath=logger.log_dir, filename='{epoch}-{step}',
         mode='min', save_last=True)
