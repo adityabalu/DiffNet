@@ -98,11 +98,11 @@ class MyPrintingCallback(pl.callbacks.Callback):
         # if trainer.current_epoch % pl_module.cfg.plot_frequency == 0:
         if trainer.current_epoch % 20 == 0:
             pl_module.network.eval()
-            nu, f, u = self.do_query(trainer, pl_module)
+            inputs, forcing = trainer.train_dataloader.dataset[0:self.num_query]
+            nu, f, u = self.do_query(trainer, pl_module, inputs, forcing)
             self.plot_contours(trainer, pl_module, nu, f, u)
 
-    def do_query(self, trainer, pl_module):
-        inputs, forcing = trainer.train_dataloader.dataset[0:self.num_query]
+    def do_query(self, trainer, pl_module, inputs, forcing):
         forcing = forcing.repeat(self.num_query,1,1,1)
         # print("\ninference for: ", trainer.train_dataloader.dataset.coeffs[0:num_query])
 
@@ -117,7 +117,7 @@ class MyPrintingCallback(pl.callbacks.Callback):
         # apply boundary conditions
         u = torch.where(bc2>0.5,1.0+u*0.0,u)
         u = torch.where(bc3>0.5,u*0.0,u)
-        u = torch.where(bc1>0.5,u*np.inf,u)
+        # u = torch.where(bc1>0.5,u*np.inf,u)
 
         # loss = pl_module.loss(u, inputs_tensor, forcing_tensor[:,0:1,:,:])
         # print("loss incurred for this coeff:", loss)
@@ -154,10 +154,10 @@ class MyPrintingCallback(pl.callbacks.Callback):
 
 def main():
     load_from_prev = False
-    # dirname = '../ImageDataset'
+    dirname = '../ImageDataset'
     # dirname = '../AirfoilImageSet'
     # dirname = '../images-neumann-case'
-    dirname = '../neumann-nurbs-objects'
+    # dirname = '../neumann-nurbs-objects'
     load_prev_path = './cib_neumann/version_10'
     batch_size = 16
     dataset = ImageIMBackNeumann(dirname, domain_size=256)
