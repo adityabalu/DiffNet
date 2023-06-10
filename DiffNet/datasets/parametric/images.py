@@ -12,7 +12,7 @@ class ImageIMBack(data.Dataset):
         """
         Initialization
         """
-        filenames = os.listdir(dirname)
+        filenames = sorted(os.listdir(dirname))
         self.dataset = []
         for fname in filenames:
             filename = os.path.join(dirname, fname)
@@ -54,7 +54,7 @@ class ImageIMBackObject(data.Dataset):
         """
         Initialization
         """
-        filenames = os.listdir(dirname)
+        filenames = sorted(os.listdir(dirname))
         self.dataset = []
         for fname in filenames:
             filename = os.path.join(dirname, fname)
@@ -96,7 +96,7 @@ class ImageIMBackNeumann(data.Dataset):
         """
         Initialization
         """
-        filenames = os.listdir(dirname)
+        filenames = sorted(os.listdir(dirname))
         self.dataset = []
         for fname in filenames:
             filename = os.path.join(dirname, fname)
