@@ -22,7 +22,7 @@ IBN
 ```
 The used datasets can be downloaded from [this CyBox location](https://iastate.box.com/s/u7pbj2eby4ckr23eyx86oksksz8masbe).
 
-[comment]: <> (One dataset used in \emph{Neural PDE Solvers for Irregular Domains}, (https://arxiv.org/abs/2211.03241, Fig. 3a).)
+<!-- One dataset used in \emph{Neural PDE Solvers for Irregular Domains}, (https://arxiv.org/abs/2211.03241, Fig. 3a). -->
 
 ```sh
 cd DiffNet/examples/poisson/parametric
