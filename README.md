@@ -8,7 +8,18 @@ cd DiffNet
 python setup.py develop --user
 ```
 
-# Examples
+# IBN Examples
+Codes for the examples used in the [IBN paper](https://arxiv.org/pdf/2211.03241.pdf) can be found in the `IBN` directory:
+```
+IBN
+  datasets
+  error-analysis
+  poisson-2d
+    parametric
+  poisson-3d
+    non-parametric
+    parametric
+```
 Generalizable Poisson Solver:
 
 Download a dataset of randomly generated shapes at https://iastate.box.com/s/u7pbj2eby4ckr23eyx86oksksz8masbe. One dataset used in \emph{Neural PDE Solvers for Irregular Domains}, (https://arxiv.org/abs/2211.03241, Fig. 3a).
